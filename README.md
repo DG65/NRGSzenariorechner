@@ -7,8 +7,8 @@ Optionswechsel.
 
 Reiner Rechner, kein Regler — setzt nichts durch, greift auf Verbund-Verträge lesend zu.
 
-**Stand:** Phase 2 (Version 0.2.0-beta.1) — Szenarien "Dynamischer Vertrag vs. Festpreis"
-und "Speichergröße". Konzept für alle vier Szenario-Typen: [KONZEPT.md](KONZEPT.md).
+**Stand:** Phase 3 (Version 0.3.0-beta.1) — Szenarien "Dynamischer Vertrag vs. Festpreis",
+"Speichergröße" und "§14a-Beitritt". Konzept für alle vier Szenario-Typen: [KONZEPT.md](KONZEPT.md).
 
 Teil des **NRG-Stack** — welche Modulstände zusammenpassen, steht im
 [Kompatibilitäts-Manifest](https://github.com/DG65/EMS/blob/main/SUITE.md).

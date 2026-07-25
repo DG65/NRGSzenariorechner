@@ -61,7 +61,7 @@ im Formular als bekannte Einschränkung vermerkt.
 - **Fazit:** Kein Blocker, aber Registrierungsaufwand — für Phase 1 (dynamischer Vertrag)
   NICHT nötig, weil Tibber die Preiskurve schon liefert. Erst ab Phase "Förderende/
   Solarspitzengesetz" wird der Marktwert-Solar-Endpunkt gebraucht (Vergleich EEG-Vergütung
-  vs. Marktwert nach Formelabzug). Registrierung daher erst vor Phase 3 nötig, kein
+  vs. Marktwert nach Formelabzug). Registrierung daher erst vor Phase 4 nötig, kein
   Grund, sie jetzt schon vorzuziehen.
 
 ## Anlagendaten (Property, Referenz Memory `anlage-dietmar`)
@@ -173,8 +173,10 @@ Rollentausch).
    (kein Wirkungsgrad, keine Lade-/Entladeleistungsgrenzen), stündliche Auflösung wie
    Phase 1. Amortisation gegenüber der AKTUELL konfigurierten Speichergröße gerechnet
    (Frage: lohnt sich eine Vergrößerung?), nicht gegenüber 0 kWh. **→ Phase 2, gebaut.**
-3. **§14a-Beitritt** — `SZR_CalculateParagraph14aScenario()`. Wartet auf
-   Rückkopplung mit SteuerboxHub-Historisierung (Rückfrage nötig).
+3. **§14a-Beitritt** — `SZR_CalculateParagraph14aScenario()`. EMS-Koordination
+   25.07.2026 bestätigt: `SBH_GetState` liefert derzeit nur den Live-Zustand, keine
+   Ereignis-Historie, und wird das absehbar nicht (Dietmar hat keine §14a-Hardware).
+   Rechnet daher dauerhaft mit Nutzereingabe-Annahmen statt Live-Daten. **→ Phase 3, gebaut.**
 4. **Förderende/Solarspitzengesetz** — `SZR_CalculateFeedInEndScenario()` +
    `SZR_CalculateNegativePriceOptInScenario()`. Braucht Netztransparenz-Registrierung
    (Client_ID/Secret-Beschaffung ist ein manueller Schritt Dietmars im Extranet, nicht

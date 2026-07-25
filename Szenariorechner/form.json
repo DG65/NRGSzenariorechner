@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neues Szenario \"Speichergröße\": simuliert den historischen Lastgang mit verschiedenen virtuellen Speichergrößen und zeigt Autarkiegrad und Amortisation je Größe gegenüber der aktuellen Speichergröße."
+                    "caption": "Neues Szenario \"§14a-Beitritt\": wägt die Netzentgelt-Ersparnis gegen eine grob geschätzte Dimm-Kostenannahme ab (Nutzereingabe, da SteuerboxHub noch keine Ereignis-Historie liefert)."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.2');"
+                    "onClick": "SZR_DismissChangelog($id, '0.3');"
                 }
             ]
         },
@@ -30,7 +30,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenarien \"Dynamischer Vertrag vs. Festpreis\" und \"Speichergröße\", weitere Szenarien (§14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
+                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenarien \"Dynamischer Vertrag vs. Festpreis\", \"Speichergröße\" und \"§14a-Beitritt\", weiteres Szenario (Förderende/Solarspitzengesetz) folgt. Details im KONZEPT.md des Repos."
                 }
             ]
         },
@@ -124,6 +124,39 @@
                     "type": "NumberSpinner",
                     "name": "SpeicherAbschreibungJahre",
                     "caption": "Angenommene Nutzungsdauer (Jahre)"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Szenario: §14a-Beitritt",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Ohne Ereignis-Historie von SteuerboxHub (liefert aktuell nur den Live-Zustand) beruht dieses Szenario auf angenommenen Werten statt gemessener Häufigkeit."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Paragraph14aNetzentgeltErsparnisJahr",
+                    "caption": "Netzentgelt-Ersparnis durch §14a (€/Jahr)",
+                    "digits": 2
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Paragraph14aAnnahmeEreignisseJahr",
+                    "caption": "Angenommene Dimm-Ereignisse pro Jahr"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Paragraph14aAnnahmeDauerMinuten",
+                    "caption": "Angenommene Dauer je Ereignis (Minuten)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Paragraph14aAnnahmeReduktionKw",
+                    "caption": "Angenommene Lastreduktion je Ereignis (kW)",
+                    "digits": 1
                 }
             ]
         },

@@ -14,8 +14,11 @@
 //            Preiskurve (TIBBERGR_GetPriceCurve).
 //  Phase 2 — Speichergröße: vereinfachte SoC-Simulation aus historischer
 //            PV-Erzeugung/Hauslast, Autarkiegrad und Amortisation je Größe.
-// Weitere Szenarien (§14a-Beitritt, Förderende/Solarspitzengesetz) folgen als
-// eigene SZR_Calculate*Scenario()-Funktionen in späteren Phasen.
+//  Phase 3 — §14a-Beitritt: Netzentgelt-Ersparnis vs. monetarisierte
+//            Dimm-Annahmen (reine Nutzereingabe, SBH_GetState liefert noch
+//            keine Historie — bestätigt EMS-Koordination 25.07.2026).
+// Weitere Szenarien (Förderende/Solarspitzengesetz) folgen als eigene
+// SZR_Calculate*Scenario()-Funktionen in späteren Phasen.
 // ===========================================================================
 
 class Szenariorechner extends IPSModule
@@ -52,6 +55,15 @@ class Szenariorechner extends IPSModule
         $this->RegisterPropertyFloat('SpeicherPreisEurKwh', 400.0);
         $this->RegisterPropertyInteger('SpeicherAbschreibungJahre', 15);
 
+        // ── §14a-Beitritt (Szenario 3) — reine Nutzereingabe-Annahmen, da
+        // SBH_GetState (SteuerboxHub) aktuell nur den Live-Zustand liefert,
+        // keine Historie (bestätigt EMS-Koordination 25.07.2026). Sobald eine
+        // Historisierung existiert, kann hierauf umgestellt werden.
+        $this->RegisterPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr', 150.0);
+        $this->RegisterPropertyInteger('Paragraph14aAnnahmeEreignisseJahr', 20);
+        $this->RegisterPropertyInteger('Paragraph14aAnnahmeDauerMinuten', 120);
+        $this->RegisterPropertyFloat('Paragraph14aAnnahmeReduktionKw', 4.2);
+
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
         $this->RegisterAttributeBoolean('ForumHintGone', false);
@@ -61,7 +73,7 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.2');
+        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.3');
         $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
         $this->injectVersionLabel($form);
 
@@ -408,6 +420,97 @@ class Szenariorechner extends IPSModule
 
         $result['dataComplete'] = count($hours) > 0;
         return $result;
+    }
+
+    // -----------------------------------------------------------------
+    //  Szenario 3: §14a-Beitritt
+    // -----------------------------------------------------------------
+
+    /**
+     * Wägt die Netzentgelt-Ersparnis eines §14a-Beitritts gegen eine grob
+     * monetarisierte Dimm-Annahme ab. REINE Nutzereingabe-Rechnung: SBH_GetState
+     * (SteuerboxHub) liefert derzeit nur den Live-Zustand, keine Ereignis-Historie
+     * (bestätigt EMS-Koordination 25.07.2026) — sobald eine Historisierung
+     * existiert, kann auf echte Häufigkeit/Dauer umgestellt werden, siehe
+     * KONZEPT.md Abschnitt 3.
+     *
+     * Dimm-Kosten-Schätzung: angenommene Ereignisse/Jahr × Dauer × angenommene
+     * Lastreduktion (kW) ergibt eine "verhinderte" Energiemenge/Jahr, bewertet
+     * zum mittleren Strompreis (dynamische Preiskurve falls TibberGridReward
+     * vorhanden, sonst Festpreis) — eine GROBE Näherung für den Wert der
+     * verschobenen/verhinderten Last, kein realer Schaden (die Energie wird ja
+     * meist nur zeitlich verschoben, nicht vernichtet). Explizit als Näherung
+     * gekennzeichnet ('dimmCostIsRoughEstimate' => true).
+     *
+     * Rückgabe:
+     *   'contractVersion'          => '1.0',
+     *   'netzentgeltErsparnisJahr' => float,  // € (Property-Eingabe)
+     *   'referenzTibberJahr'       => float|null, // € aus TIBBERGR_GetTariffConfig, falls verfügbar (nur Vergleichswert)
+     *   'angenommeneEreignisseJahr'=> int,
+     *   'angenommeneDauerMinuten'  => int,
+     *   'angenommeneReduktionKw'   => float,
+     *   'betroffeneEnergieJahrKwh' => float,
+     *   'mittlererPreisCtKwh'      => float,
+     *   'dimmKostenSchaetzungJahr' => float,  // €, Näherung
+     *   'nettoNutzenJahr'          => float,  // netzentgeltErsparnisJahr - dimmKostenSchaetzungJahr
+     *   'dimmCostIsRoughEstimate'  => true,
+     *   'sbhLiveHistorieVerfuegbar'=> bool,   // informativ, aktuell immer false
+     */
+    public function CalculateParagraph14aScenario(): array
+    {
+        $ersparnis = $this->ReadPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr');
+        $ereignisse = $this->ReadPropertyInteger('Paragraph14aAnnahmeEreignisseJahr');
+        $dauerMinuten = $this->ReadPropertyInteger('Paragraph14aAnnahmeDauerMinuten');
+        $reduktionKw = $this->ReadPropertyFloat('Paragraph14aAnnahmeReduktionKw');
+
+        $referenzTibberJahr = null;
+        if (function_exists('TIBBERGR_GetTariffConfig')) {
+            $ids = @IPS_GetInstanceListByModuleID('{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}');
+            foreach (($ids ?: []) as $iid) {
+                $cfg = @TIBBERGR_GetTariffConfig($iid);
+                if (is_array($cfg) && ($cfg['paragraph14aEnabled'] ?? false)) {
+                    $referenzTibberJahr = (float) ($cfg['paragraph14aReductionYear'] ?? 0.0);
+                    break;
+                }
+            }
+        }
+
+        $betroffeneEnergieJahrKwh = $ereignisse * ($dauerMinuten / 60.0) * $reduktionKw;
+
+        $mittlererPreisCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
+        if (function_exists('TIBBERGR_GetPriceCurve')) {
+            $slots = @TIBBERGR_GetPriceCurve();
+            if (is_array($slots) && count($slots) > 0) {
+                $sum = 0.0;
+                $n = 0;
+                foreach ($slots as $slot) {
+                    if (isset($slot['price'])) {
+                        $sum += (float) $slot['price'];
+                        $n++;
+                    }
+                }
+                if ($n > 0) {
+                    $mittlererPreisCtKwh = $sum / $n;
+                }
+            }
+        }
+
+        $dimmKostenSchaetzungJahr = $betroffeneEnergieJahrKwh * $mittlererPreisCtKwh / 100.0;
+
+        return [
+            'contractVersion'           => '1.0',
+            'netzentgeltErsparnisJahr'  => round($ersparnis, 2),
+            'referenzTibberJahr'        => $referenzTibberJahr !== null ? round($referenzTibberJahr, 2) : null,
+            'angenommeneEreignisseJahr' => $ereignisse,
+            'angenommeneDauerMinuten'   => $dauerMinuten,
+            'angenommeneReduktionKw'    => $reduktionKw,
+            'betroffeneEnergieJahrKwh'  => round($betroffeneEnergieJahrKwh, 1),
+            'mittlererPreisCtKwh'       => round($mittlererPreisCtKwh, 2),
+            'dimmKostenSchaetzungJahr'  => round($dimmKostenSchaetzungJahr, 2),
+            'nettoNutzenJahr'           => round($ersparnis - $dimmKostenSchaetzungJahr, 2),
+            'dimmCostIsRoughEstimate'   => true,
+            'sbhLiveHistorieVerfuegbar' => false,
+        ];
     }
 
     // -----------------------------------------------------------------
