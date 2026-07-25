@@ -80,6 +80,64 @@ class Szenariorechner extends IPSModule
         return json_encode($form);
     }
 
+    /**
+     * Sammel-Getter für die Dashboard-Kopplung (abgestimmt 25.07.2026): listet
+     * alle Szenario-Typen mit Anzeigename und Verfügbarkeit, damit der
+     * Konsument neue Szenarien nicht fest verdrahten muss (Discovery-Rolle,
+     * analog den Hub-Verträgen). Jeder Eintrag benennt die zugehörige
+     * `SZR_Calculate*Scenario()`-Funktion; deren Feldlisten stehen als PHPDoc
+     * direkt über der jeweiligen Funktion.
+     *
+     * Rückgabe je Eintrag:
+     *   'type'            => string,  // stabiler Schlüssel, Teil des Vertrags
+     *   'label'            => string,  // deutscher Anzeigename
+     *   'function'         => string,  // Funktionsname ohne SZR_-Präfix
+     *   'contractVersion'  => '1.0',
+     *   'available'        => bool,    // Voraussetzungen erfüllt?
+     *   'reason'           => string,  // bei available=false: was fehlt (deutsch)
+     */
+    public function GetAvailableScenarios(): array
+    {
+        $scenarios = [];
+
+        $tibberOk = function_exists('TIBBERGR_GetPriceCurve');
+        $netzbezugOk = $this->ReadPropertyInteger('NetzbezugVarID') > 0;
+        $scenarios[] = [
+            'type'            => 'dynamicTariff',
+            'label'           => 'Dynamischer Vertrag vs. Festpreis',
+            'function'        => 'CalculateDynamicTariffScenario',
+            'contractVersion' => '1.0',
+            'available'       => $tibberOk && $netzbezugOk,
+            'reason'          => !$netzbezugOk
+                ? 'Netzbezugsvariable nicht konfiguriert'
+                : (!$tibberOk ? 'TibberGridRewards nicht gefunden' : ''),
+        ];
+
+        $storageVarsOk = $this->ReadPropertyInteger('PvErzeugungVarID') > 0
+            && $this->ReadPropertyInteger('HausLastVarID') > 0;
+        $scenarios[] = [
+            'type'            => 'storageSize',
+            'label'           => 'Speichergröße',
+            'function'        => 'CalculateStorageSizeScenario',
+            'contractVersion' => '1.0',
+            'available'       => $storageVarsOk,
+            'reason'          => $storageVarsOk ? '' : 'PV-Erzeugungs-/Hauslastvariable nicht konfiguriert',
+        ];
+
+        // §14a-Beitritt ist reine Nutzereingabe (keine Fremdmodul-Voraussetzung),
+        // daher immer verfügbar — siehe KONZEPT.md Abschnitt 3.
+        $scenarios[] = [
+            'type'            => 'paragraph14a',
+            'label'           => '§14a-Beitritt',
+            'function'        => 'CalculateParagraph14aScenario',
+            'contractVersion' => '1.0',
+            'available'       => true,
+            'reason'          => '',
+        ];
+
+        return $scenarios;
+    }
+
     // Versionszeile im Doku-Panel dauerhaft sichtbar (Verbund-Konvention), aus
     // library.json ermittelt statt fest im Formular verdrahtet.
     private function injectVersionLabel(array &$form): void
