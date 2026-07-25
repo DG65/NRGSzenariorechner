@@ -1,0 +1,12 @@
+{
+    "id": "{9B2E1A3F-6C7D-4E8B-9A1C-2D3E4F5A6B7C}",
+    "author": "DG65",
+    "name": "Szenariorechner",
+    "url": "https://github.com/DG65/Szenariorechner",
+    "compatibility": {
+        "version": "9.0"
+    },
+    "version": "0.1.0-beta.1",
+    "build": 1,
+    "date": 1785110400
+}

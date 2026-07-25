@@ -1,0 +1,108 @@
+{
+    "elements": [
+        {
+            "type": "ExpansionPanel",
+            "name": "ChangelogPanel",
+            "caption": "Neu in Version 0.1",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Erste Phase: Rechnet nach, was ein dynamischer Stromvertrag (auf Basis der TibberGridReward-Preiskurve) gegenüber dem aktuellen Festpreis gebracht hätte."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Verstanden – nicht mehr anzeigen",
+                    "onClick": "SZR_DismissChangelog($id, '0.1')"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Dokumentation & Hilfe",
+            "expanded": false,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Szenariorechner Version 0.1.0-beta.1. Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenario \"Dynamischer Vertrag vs. Festpreis\", weitere Szenarien (Speichergröße, §14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Anlagendaten",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "NumberSpinner",
+                    "name": "PvKwp",
+                    "caption": "PV-Leistung (kWp)",
+                    "digits": 2
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WrKw",
+                    "caption": "Wechselrichter-Leistung (kW)",
+                    "digits": 1
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "SpeicherKwh",
+                    "caption": "Speichergröße (kWh)",
+                    "digits": 1
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "EinspeiseverguetungCtKwh",
+                    "caption": "Einspeisevergütung (ct/kWh)",
+                    "digits": 2
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "InbetriebnahmeDatum",
+                    "caption": "Inbetriebnahmedatum (JJJJ-MM-TT)"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Szenario: Dynamischer Vertrag",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "SelectVariable",
+                    "name": "NetzbezugVarID",
+                    "caption": "Netzbezugsvariable (archiviert, kWh oder W)"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "NetzbezugIstZaehler",
+                    "caption": "Variable ist ein Energiezähler (kumulativ, kWh) statt Momentanleistung (W)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "FestpreisCtKwh",
+                    "caption": "Aktueller Festpreis (ct/kWh)",
+                    "digits": 2
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "FestpreisGrundpreisMonat",
+                    "caption": "Grundpreis (€/Monat)",
+                    "digits": 2
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Symcon-Forum",
+            "expanded": false,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Fragen und Rückmeldungen im Symcon-Forum-Thread zu diesem Modul (Link folgt nach Store-Veröffentlichung)."
+                }
+            ]
+        }
+    ]
+}
