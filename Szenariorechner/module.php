@@ -64,6 +64,19 @@ class Szenariorechner extends IPSModule
         $this->RegisterPropertyInteger('Paragraph14aAnnahmeDauerMinuten', 120);
         $this->RegisterPropertyFloat('Paragraph14aAnnahmeReduktionKw', 4.2);
 
+        // ── Netztransparenz.de-Zugang (Vorbereitung Szenario 4) ──
+        // Client_ID/Secret sind dauerhaft benötigte Zugangsdaten (OAuth2
+        // Client-Credentials, kein einmaliger Handshake) und gehören daher als
+        // Attribut gespeichert, nicht als Property (Memory nrg-stack-credentials).
+        // Eingabe über maskierte Einmal-Property-Felder, die ApplyChanges in die
+        // Attribute überträgt und danach leert.
+        $this->RegisterPropertyString('NetztransparenzClientIdInput', '');
+        $this->RegisterPropertyString('NetztransparenzClientSecretInput', '');
+        $this->RegisterAttributeString('NetztransparenzClientId', '');
+        $this->RegisterAttributeString('NetztransparenzClientSecret', '');
+        $this->RegisterAttributeString('NetztransparenzToken', '');
+        $this->RegisterAttributeInteger('NetztransparenzTokenExpires', 0);
+
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
         $this->RegisterAttributeBoolean('ForumHintGone', false);
@@ -76,6 +89,7 @@ class Szenariorechner extends IPSModule
         $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.3');
         $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
         $this->injectVersionLabel($form);
+        $this->injectNetztransparenzStatus($form);
 
         return json_encode($form);
     }
@@ -138,6 +152,35 @@ class Szenariorechner extends IPSModule
         return $scenarios;
     }
 
+    /**
+     * Übernimmt einmalig eingegebene Netztransparenz-Zugangsdaten aus den
+     * maskierten Property-Feldern ins Attribut und leert die Property-Felder
+     * anschließend. Rückgabe true, wenn eine Übernahme stattgefunden hat (der
+     * Aufrufer bricht dann seinen eigenen ApplyChanges-Durchlauf ab, siehe dort).
+     */
+    private function takeOverNetztransparenzCredentials(): bool
+    {
+        $idInput = $this->ReadPropertyString('NetztransparenzClientIdInput');
+        $secretInput = $this->ReadPropertyString('NetztransparenzClientSecretInput');
+        if ($idInput === '' && $secretInput === '') {
+            return false;
+        }
+        if ($idInput !== '') {
+            $this->WriteAttributeString('NetztransparenzClientId', $idInput);
+        }
+        if ($secretInput !== '') {
+            $this->WriteAttributeString('NetztransparenzClientSecret', $secretInput);
+        }
+        // Token-Cache verwerfen, da sich die Zugangsdaten geändert haben.
+        $this->WriteAttributeString('NetztransparenzToken', '');
+        $this->WriteAttributeInteger('NetztransparenzTokenExpires', 0);
+
+        IPS_SetProperty($this->InstanceID, 'NetztransparenzClientIdInput', '');
+        IPS_SetProperty($this->InstanceID, 'NetztransparenzClientSecretInput', '');
+        IPS_ApplyChanges($this->InstanceID);
+        return true;
+    }
+
     // Versionszeile im Doku-Panel dauerhaft sichtbar (Verbund-Konvention), aus
     // library.json ermittelt statt fest im Formular verdrahtet.
     private function injectVersionLabel(array &$form): void
@@ -149,6 +192,22 @@ class Szenariorechner extends IPSModule
         foreach ($form['elements'] as &$el) {
             if (($el['name'] ?? '') === 'DocVersionLabel') {
                 $el['caption'] = $verTxt;
+                return;
+            }
+        }
+        unset($el);
+    }
+
+    private function injectNetztransparenzStatus(array &$form): void
+    {
+        $hasCredentials = $this->ReadAttributeString('NetztransparenzClientId') !== ''
+            && $this->ReadAttributeString('NetztransparenzClientSecret') !== '';
+        $caption = $hasCredentials
+            ? 'ℹ️ Zugangsdaten hinterlegt — Szenario "Förderende/Solarspitzengesetz" folgt.'
+            : 'Zugangsdaten fehlen — Szenario "Förderende/Solarspitzengesetz" noch nicht verfügbar.';
+        foreach ($form['elements'] as &$el) {
+            if (($el['name'] ?? '') === 'NetztransparenzStatusLabel') {
+                $el['caption'] = $caption;
                 return;
             }
         }
@@ -181,6 +240,13 @@ class Szenariorechner extends IPSModule
     public function ApplyChanges()
     {
         parent::ApplyChanges();
+
+        if ($this->takeOverNetztransparenzCredentials()) {
+            // Eigenen Aufruf sofort beenden: takeOverNetztransparenzCredentials()
+            // hat die Eingabefelder geleert und einen neuen ApplyChanges-Durchlauf
+            // angestoßen, der den Status unten mit sauberem Property-Stand setzt.
+            return;
+        }
 
         $status = 102;
         $message = '';
@@ -583,6 +649,146 @@ class Szenariorechner extends IPSModule
      * Archiv oder fehlenden Daten (Aufrufer bricht dann ab, statt mit einer
      * leeren/irreführenden Rechnung fortzufahren).
      */
+    // -----------------------------------------------------------------
+    //  Netztransparenz.de-Client (Vorbereitung Szenario 4)
+    // -----------------------------------------------------------------
+    // NICHT als eigenständige Kopplung hinter function_exists() zu sichern
+    // (das gilt für Verbund-Module) — das ist eine echte externe HTTP-API,
+    // daher direkte Fehlerbehandlung statt Guard. Client_ID/Secret siehe
+    // Create()/takeOverNetztransparenzCredentials(). UNGETESTET gegen echte
+    // Zugangsdaten (Stand: Client_ID/Secret liegen noch nicht vor, siehe
+    // KONZEPT.md Abschnitt Netztransparenz.de-API).
+
+    private const NETZTRANSPARENZ_TOKEN_URL = 'https://identity.netztransparenz.de/users/connect/token';
+    private const NETZTRANSPARENZ_BASE_URL = 'https://ds.netztransparenz.de/api/v1/data';
+
+    /**
+     * Liefert einen gültigen Access-Token (Client-Credentials-Flow), aus dem
+     * Attribut-Cache falls noch gültig (Token 1h gültig, 60 s Sicherheitsmarge).
+     * Rückgabe null ohne konfigurierte Zugangsdaten oder bei Fehler.
+     */
+    private function getNetztransparenzToken(): ?string
+    {
+        $clientId = $this->ReadAttributeString('NetztransparenzClientId');
+        $clientSecret = $this->ReadAttributeString('NetztransparenzClientSecret');
+        if ($clientId === '' || $clientSecret === '') {
+            return null;
+        }
+
+        $cached = $this->ReadAttributeString('NetztransparenzToken');
+        $expires = $this->ReadAttributeInteger('NetztransparenzTokenExpires');
+        if ($cached !== '' && $expires > (time() + 60)) {
+            return $cached;
+        }
+
+        $body = http_build_query([
+            'grant_type'    => 'client_credentials',
+            'client_id'     => $clientId,
+            'client_secret' => $clientSecret,
+        ]);
+        $context = stream_context_create([
+            'http' => [
+                'method'        => 'POST',
+                'header'        => "Content-Type: application/x-www-form-urlencoded\r\n",
+                'content'       => $body,
+                'timeout'       => 15,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $response = @file_get_contents(self::NETZTRANSPARENZ_TOKEN_URL, false, $context);
+        if ($response === false) {
+            $this->SendDebug(__FUNCTION__, 'Token-Anfrage fehlgeschlagen (kein Response)', 0);
+            return null;
+        }
+        $data = json_decode($response, true);
+        if (!is_array($data) || !isset($data['access_token'])) {
+            $this->SendDebug(__FUNCTION__, 'Token-Antwort ohne access_token: ' . $response, 0);
+            return null;
+        }
+
+        $token = (string) $data['access_token'];
+        $ttl = (int) ($data['expires_in'] ?? 3600);
+        $this->WriteAttributeString('NetztransparenzToken', $token);
+        $this->WriteAttributeInteger('NetztransparenzTokenExpires', time() + $ttl);
+        return $token;
+    }
+
+    /**
+     * Ruft einen Netztransparenz-Datenendpunkt ab (CSV-Antwort, Semikolon-
+     * getrennt) und liefert die geparsten Zeilen als assoziative Arrays
+     * (Kopfzeile als Schlüssel). Rückgabe null ohne Token oder bei Fehler.
+     */
+    private function fetchNetztransparenzCsv(string $path, array $query = []): ?array
+    {
+        $token = $this->getNetztransparenzToken();
+        if ($token === null) {
+            return null;
+        }
+        $url = self::NETZTRANSPARENZ_BASE_URL . '/' . ltrim($path, '/');
+        if (count($query) > 0) {
+            $url .= '?' . http_build_query($query);
+        }
+        $context = stream_context_create([
+            'http' => [
+                'method'        => 'GET',
+                'header'        => "Authorization: Bearer $token\r\n",
+                'timeout'       => 20,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false || $response === '') {
+            $this->SendDebug(__FUNCTION__, "Abruf fehlgeschlagen: $url", 0);
+            return null;
+        }
+
+        $lines = preg_split('/\r\n|\r|\n/', trim($response));
+        if (count($lines) < 2) {
+            return [];
+        }
+        $header = str_getcsv(array_shift($lines), ';');
+        $rows = [];
+        foreach ($lines as $line) {
+            if ($line === '') {
+                continue;
+            }
+            $cols = str_getcsv($line, ';');
+            $rows[] = array_combine($header, array_pad($cols, count($header), null));
+        }
+        return $rows;
+    }
+
+    /**
+     * Marktwert Solar (Monatsmarktwerte, Format 12) für den angegebenen
+     * Monatsbereich. Rückgabe je Monat: 'monat' (String "M/JJJJ"),
+     * 'marktwertSolarCtKwh' (float), 'negativeStunden1h'/'3h'/'4h'/'6h' (bool|null).
+     * Rückgabe null ohne Zugangsdaten oder bei Fehler.
+     */
+    private function getMarktwertSolar(int $yearFrom, int $monthFrom, int $yearTo, int $monthTo): ?array
+    {
+        $rows = $this->fetchNetztransparenzCsv('marktpraemie', [
+            'yearFrom'  => $yearFrom,
+            'monthFrom' => str_pad((string) $monthFrom, 2, '0', STR_PAD_LEFT),
+            'yearTo'    => $yearTo,
+            'monthTo'   => str_pad((string) $monthTo, 2, '0', STR_PAD_LEFT),
+        ]);
+        if ($rows === null) {
+            return null;
+        }
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'monat'               => $row['Monat'] ?? '',
+                'marktwertSolarCtKwh' => isset($row['MW Solar in ct/kWh']) ? (float) str_replace(',', '.', $row['MW Solar in ct/kWh']) : null,
+                'negativeStunden1h'   => ($row['Negative Stunden (1H)'] ?? '') === 'Ja',
+                'negativeStunden3h'   => ($row['Negative Stunden (3H)'] ?? '') === 'Ja',
+                'negativeStunden4h'   => ($row['Negative Stunden (4H)'] ?? '') === 'Ja',
+                'negativeStunden6h'   => ($row['Negative Stunden (6H)'] ?? '') === 'Ja',
+            ];
+        }
+        return $result;
+    }
+
     private function hourlyKwhSeries(int $varID, bool $isCounter, int $start, int $end): ?array
     {
         if ($varID <= 0 || !IPS_VariableExists($varID)) {

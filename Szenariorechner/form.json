@@ -161,6 +161,32 @@
             ]
         },
         {
+            "type": "ExpansionPanel",
+            "caption": "Netztransparenz.de-Zugang (für Szenario Förderende/Solarspitzengesetz)",
+            "expanded": false,
+            "items": [
+                {
+                    "type": "Label",
+                    "name": "NetztransparenzStatusLabel",
+                    "caption": "Zugangsdaten fehlen — Szenario \"Förderende/Solarspitzengesetz\" noch nicht verfügbar."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Client-ID/Secret aus dem OAuth-Manager im Netztransparenz-Extranet (https://api-portal.netztransparenz.de/). Werden nach dem Speichern sofort in die interne Zugangsdatenverwaltung übernommen und hier geleert."
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "NetztransparenzClientIdInput",
+                    "caption": "Client-ID (einmalig eingeben)"
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "NetztransparenzClientSecretInput",
+                    "caption": "Client-Secret (einmalig eingeben)"
+                }
+            ]
+        },
+        {
             "type": "RowLayout",
             "name": "ForumHint",
             "items": [
