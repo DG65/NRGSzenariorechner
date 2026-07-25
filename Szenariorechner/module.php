@@ -8,10 +8,13 @@
 //
 // Konzept und Phasenplan: siehe KONZEPT.md im Repo-Wurzelverzeichnis.
 //
-// Phase 1 (dieses Modul, Stand): dynamischer Vertrag vs. Festpreis, auf Basis
-// des bestehenden historischen Netzbezugs (AC_GetAggregatedValues) und der
-// TibberGridReward-Preiskurve (TIBBERGR_GetPriceCurve). Weitere Szenarien
-// (Speichergröße, §14a-Beitritt, Förderende/Solarspitzengesetz) folgen als
+// Bisheriger Stand:
+//  Phase 1 — dynamischer Vertrag vs. Festpreis, auf Basis des historischen
+//            Netzbezugs (AC_GetAggregatedValues) und der TibberGridReward-
+//            Preiskurve (TIBBERGR_GetPriceCurve).
+//  Phase 2 — Speichergröße: vereinfachte SoC-Simulation aus historischer
+//            PV-Erzeugung/Hauslast, Autarkiegrad und Amortisation je Größe.
+// Weitere Szenarien (§14a-Beitritt, Förderende/Solarspitzengesetz) folgen als
 // eigene SZR_Calculate*Scenario()-Funktionen in späteren Phasen.
 // ===========================================================================
 
@@ -41,6 +44,14 @@ class Szenariorechner extends IPSModule
         $this->RegisterPropertyFloat('FestpreisCtKwh', 32.0);
         $this->RegisterPropertyFloat('FestpreisGrundpreisMonat', 12.0);
 
+        // ── Datenquellen PV-Erzeugung/Hauslast (historisch, für Szenario 2: Speichergröße) ──
+        // Beide als LEISTUNG (W) erwartet — üblicherweise InverterHub-/MeterHub-
+        // Momentanwerte, nicht kumulative Zähler (anders als NetzbezugVarID oben).
+        $this->RegisterPropertyInteger('PvErzeugungVarID', 0);
+        $this->RegisterPropertyInteger('HausLastVarID', 0);
+        $this->RegisterPropertyFloat('SpeicherPreisEurKwh', 400.0);
+        $this->RegisterPropertyInteger('SpeicherAbschreibungJahre', 15);
+
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
         $this->RegisterAttributeBoolean('ForumHintGone', false);
@@ -50,7 +61,7 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.1');
+        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.2');
         $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
         $this->injectVersionLabel($form);
 
@@ -182,32 +193,15 @@ class Szenariorechner extends IPSModule
             return $result;
         }
 
-        $archiveID = $this->getArchiveID($varID);
-        if ($archiveID === 0) {
-            $this->SendDebug(__FUNCTION__, 'Netzbezugsvariable ist nicht archiviert', 0);
-            return $result;
-        }
-
         $end = strtotime('today midnight');
         $start = $end - ($days * 86400);
         $result['periodFrom'] = $start;
         $result['periodTo'] = $end;
 
-        // Netzbezug je Stunde (kWh) aus dem Archiv.
-        $rows = AC_GetAggregatedValues($archiveID, $varID, 0 /* stündlich */, $start, $end, 0);
-        if (!is_array($rows) || count($rows) === 0) {
-            $this->SendDebug(__FUNCTION__, 'Keine Archivdaten im Zeitraum', 0);
-            return $result;
-        }
-
         $isCounter = $this->ReadPropertyBoolean('NetzbezugIstZaehler');
-        $hourlyKwh = [];
-        foreach ($rows as $row) {
-            $hourStart = (int) $row['TimeStamp'];
-            $avg = (float) $row['Avg'];
-            // Zähler: Avg ist bereits der Verbrauch der Stunde (kWh).
-            // Leistungsvariable (W): Avg ist mittlere Leistung -> * 1h in kWh.
-            $hourlyKwh[$hourStart] = $isCounter ? $avg : ($avg / 1000.0);
+        $hourlyKwh = $this->hourlyKwhSeries($varID, $isCounter, $start, $end);
+        if ($hourlyKwh === null) {
+            return $result;
         }
 
         // Preiskurve holen und auf Stundenmittel verdichten.
@@ -272,8 +266,186 @@ class Szenariorechner extends IPSModule
     }
 
     // -----------------------------------------------------------------
+    //  Szenario 2: Speichergröße
+    // -----------------------------------------------------------------
+
+    /**
+     * Simuliert den historischen Lastgang (PV-Erzeugung/Hauslast, stündlich)
+     * mit variabler virtueller Speichergröße und ermittelt den daraus
+     * resultierenden Autarkiegrad sowie die Wirtschaftlichkeit je Größe.
+     *
+     * Vereinfachtes SoC-Modell (Phase 2, bewusst ohne Wirkungsgradverluste):
+     * PV-Überschuss (PV > Last) lädt den virtuellen Speicher bis 100 % SoC,
+     * Fehlbetrag (Last > PV) entlädt ihn bis 0 % SoC, darüber hinaus wird aus
+     * dem Netz bezogen bzw. ins Netz eingespeist. Kein Modell für Lade-/
+     * Entladeleistungsgrenzen — bei sehr kurzen Lastspitzen daher optimistisch.
+     *
+     * Rückgabe:
+     *   'contractVersion' => '1.0',
+     *   'periodDays'       => int,
+     *   'periodFrom'/'periodTo' => int (Unix),
+     *   'currentStorageKwh'=> float,  // aktuell konfigurierte Speichergröße (Referenzpunkt)
+     *   'sizes'            => [
+     *       [ 'storageKwh' => float, 'selfSufficiencyPercent' => float,
+     *         'selfConsumptionPercent' => float, 'gridImportKwh' => float,
+     *         'additionalKwhVsCurrent' => float, 'additionalSavingsEurPerYear' => float,
+     *         'paybackYears' => float|null ],
+     *       …
+     *   ],
+     *   'dataComplete'     => bool,
+     */
+    public function CalculateStorageSizeScenario(int $days): array
+    {
+        $result = [
+            'contractVersion'   => '1.0',
+            'periodDays'        => $days,
+            'periodFrom'        => 0,
+            'periodTo'          => 0,
+            'currentStorageKwh' => $this->ReadPropertyFloat('SpeicherKwh'),
+            'sizes'             => [],
+            'dataComplete'      => false,
+        ];
+
+        if ($days <= 0) {
+            return $result;
+        }
+
+        $pvVarID = $this->ReadPropertyInteger('PvErzeugungVarID');
+        $lastVarID = $this->ReadPropertyInteger('HausLastVarID');
+        if ($pvVarID <= 0 || $lastVarID <= 0) {
+            $this->SendDebug(__FUNCTION__, 'PV-Erzeugungs-/Hauslastvariable nicht konfiguriert', 0);
+            return $result;
+        }
+
+        $end = strtotime('today midnight');
+        $start = $end - ($days * 86400);
+        $result['periodFrom'] = $start;
+        $result['periodTo'] = $end;
+
+        $pvKwh = $this->hourlyKwhSeries($pvVarID, false, $start, $end);
+        $lastKwh = $this->hourlyKwhSeries($lastVarID, false, $start, $end);
+        if ($pvKwh === null || $lastKwh === null) {
+            return $result;
+        }
+
+        $hours = array_unique(array_merge(array_keys($pvKwh), array_keys($lastKwh)));
+        sort($hours);
+
+        $fixedCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
+        $einspeiseCtKwh = $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
+        $speicherPreis = $this->ReadPropertyFloat('SpeicherPreisEurKwh');
+
+        $stepsKwh = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0];
+        $currentStorage = $result['currentStorageKwh'];
+        $baselineGridImport = null;
+
+        foreach ($stepsKwh as $storageKwh) {
+            $soc = 0.0;
+            $totalLoad = 0.0;
+            $gridImport = 0.0;
+            foreach ($hours as $h) {
+                $pv = $pvKwh[$h] ?? 0.0;
+                $load = $lastKwh[$h] ?? 0.0;
+                $totalLoad += $load;
+                $surplus = $pv - $load;
+                if ($surplus >= 0) {
+                    $soc = min($storageKwh, $soc + $surplus);
+                    // Restüberschuss nach vollem Speicher wird eingespeist (hier nicht
+                    // weiter gebraucht, Einspeisung fließt nicht in gridImport ein).
+                } else {
+                    $deficit = -$surplus;
+                    $fromStorage = min($soc, $deficit);
+                    $soc -= $fromStorage;
+                    $gridImport += ($deficit - $fromStorage);
+                }
+            }
+
+            if ($baselineGridImport === null && $storageKwh == 0.0) {
+                $baselineGridImport = $gridImport;
+            }
+
+            $selfSufficiency = $totalLoad > 0 ? (1 - $gridImport / $totalLoad) * 100 : 0.0;
+
+            $entry = [
+                'storageKwh'                  => $storageKwh,
+                'selfSufficiencyPercent'       => round($selfSufficiency, 1),
+                'gridImportKwh'                => round($gridImport, 1),
+                'additionalKwhVsCurrent'       => null,
+                'additionalSavingsEurPerYear'  => null,
+                'paybackYears'                 => null,
+            ];
+            $result['sizes'][] = $entry;
+        }
+
+        // Zusätzliche Ersparnis je Größe gegenüber der AKTUELL konfigurierten
+        // Speichergröße (currentStorageKwh), nicht gegenüber 0 kWh — die Frage
+        // ist "lohnt sich eine Vergrößerung", nicht "lohnt sich ein Speicher".
+        $currentEntry = null;
+        foreach ($result['sizes'] as $entry) {
+            if (abs($entry['storageKwh'] - $currentStorage) < 0.01) {
+                $currentEntry = $entry;
+                break;
+            }
+        }
+        $currentGridImport = $currentEntry['gridImportKwh'] ?? null;
+
+        if ($currentGridImport !== null && $days > 0) {
+            $yearFactor = 365.0 / $days;
+            foreach ($result['sizes'] as &$entry) {
+                $savedKwh = $currentGridImport - $entry['gridImportKwh'];
+                $entry['additionalKwhVsCurrent'] = round($savedKwh, 1);
+                $savingsPerYear = $savedKwh * $yearFactor * $fixedCtKwh / 100.0;
+                $entry['additionalSavingsEurPerYear'] = round($savingsPerYear, 2);
+
+                $additionalStorageKwh = $entry['storageKwh'] - $currentStorage;
+                if ($additionalStorageKwh > 0.01 && $savingsPerYear > 0.01) {
+                    $invest = $additionalStorageKwh * $speicherPreis;
+                    $entry['paybackYears'] = round($invest / $savingsPerYear, 1);
+                }
+            }
+            unset($entry);
+        }
+
+        $result['dataComplete'] = count($hours) > 0;
+        return $result;
+    }
+
+    // -----------------------------------------------------------------
     //  Hilfsfunktionen
     // -----------------------------------------------------------------
+
+    /**
+     * Liefert kWh je Stunde (Unix-Stundenbeginn => kWh) für eine Archiv-Variable
+     * im Zeitraum [$start, $end). $isCounter = true: Avg ist bereits der
+     * Periodenverbrauch (kWh). $isCounter = false: Avg ist mittlere Leistung
+     * (W), wird auf kWh der Stunde umgerechnet. Rückgabe null bei fehlendem
+     * Archiv oder fehlenden Daten (Aufrufer bricht dann ab, statt mit einer
+     * leeren/irreführenden Rechnung fortzufahren).
+     */
+    private function hourlyKwhSeries(int $varID, bool $isCounter, int $start, int $end): ?array
+    {
+        if ($varID <= 0 || !IPS_VariableExists($varID)) {
+            $this->SendDebug(__FUNCTION__, "Variable $varID fehlt/ungültig", 0);
+            return null;
+        }
+        $archiveID = $this->getArchiveID($varID);
+        if ($archiveID === 0) {
+            $this->SendDebug(__FUNCTION__, "Variable $varID ist nicht archiviert", 0);
+            return null;
+        }
+        $rows = AC_GetAggregatedValues($archiveID, $varID, 0 /* stündlich */, $start, $end, 0);
+        if (!is_array($rows) || count($rows) === 0) {
+            $this->SendDebug(__FUNCTION__, 'Keine Archivdaten im Zeitraum', 0);
+            return null;
+        }
+        $hourlyKwh = [];
+        foreach ($rows as $row) {
+            $hourStart = (int) $row['TimeStamp'];
+            $avg = (float) $row['Avg'];
+            $hourlyKwh[$hourStart] = $isCounter ? $avg : ($avg / 1000.0);
+        }
+        return $hourlyKwh;
+    }
 
     private function getArchiveID(int $varID): int
     {

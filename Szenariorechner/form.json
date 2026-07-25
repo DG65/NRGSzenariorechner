@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Erste Phase: Rechnet nach, was ein dynamischer Stromvertrag (auf Basis der TibberGridReward-Preiskurve) gegenüber dem aktuellen Festpreis gebracht hätte."
+                    "caption": "Neues Szenario \"Speichergröße\": simuliert den historischen Lastgang mit verschiedenen virtuellen Speichergrößen und zeigt Autarkiegrad und Amortisation je Größe gegenüber der aktuellen Speichergröße."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.1');"
+                    "onClick": "SZR_DismissChangelog($id, '0.2');"
                 }
             ]
         },
@@ -30,7 +30,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenario \"Dynamischer Vertrag vs. Festpreis\", weitere Szenarien (Speichergröße, §14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
+                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenarien \"Dynamischer Vertrag vs. Festpreis\" und \"Speichergröße\", weitere Szenarien (§14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
                 }
             ]
         },
@@ -96,6 +96,34 @@
                     "name": "FestpreisGrundpreisMonat",
                     "caption": "Grundpreis (€/Monat)",
                     "digits": 2
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Szenario: Speichergröße",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "SelectVariable",
+                    "name": "PvErzeugungVarID",
+                    "caption": "PV-Erzeugung (archiviert, W)"
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "HausLastVarID",
+                    "caption": "Hauslast (archiviert, W)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "SpeicherPreisEurKwh",
+                    "caption": "Speicherpreis (€/kWh, für Amortisationsrechnung)",
+                    "digits": 0
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "SpeicherAbschreibungJahre",
+                    "caption": "Angenommene Nutzungsdauer (Jahre)"
                 }
             ]
         },

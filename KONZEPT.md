@@ -168,9 +168,11 @@ Rollentausch).
 ## Bauplan (Phasen, jede lauffähig)
 
 1. **Dynamischer Vertrag** — `SZR_CalculateDynamicTariffScenario()`. Nutzt nur
-   bestehende Verbund-Verträge, kein externer Zugang. **→ Phase 1, jetzt gebaut.**
-2. **Speichergröße** — `SZR_CalculateStorageSizeScenario()`. Eigenes Simulationsmodell,
-   keine neue externe Quelle.
+   bestehende Verbund-Verträge, kein externer Zugang. **→ Phase 1, gebaut.**
+2. **Speichergröße** — `SZR_CalculateStorageSizeScenario()`. Vereinfachtes SoC-Modell
+   (kein Wirkungsgrad, keine Lade-/Entladeleistungsgrenzen), stündliche Auflösung wie
+   Phase 1. Amortisation gegenüber der AKTUELL konfigurierten Speichergröße gerechnet
+   (Frage: lohnt sich eine Vergrößerung?), nicht gegenüber 0 kWh. **→ Phase 2, gebaut.**
 3. **§14a-Beitritt** — `SZR_CalculateParagraph14aScenario()`. Wartet auf
    Rückkopplung mit SteuerboxHub-Historisierung (Rückfrage nötig).
 4. **Förderende/Solarspitzengesetz** — `SZR_CalculateFeedInEndScenario()` +
