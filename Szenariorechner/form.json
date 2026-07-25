@@ -3,7 +3,7 @@
         {
             "type": "ExpansionPanel",
             "name": "ChangelogPanel",
-            "caption": "Neu in Version 0.1",
+            "caption": "🆕 Neu in dieser Version",
             "expanded": true,
             "items": [
                 {
@@ -13,18 +13,24 @@
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.1')"
+                    "onClick": "SZR_DismissChangelog($id, '0.1');"
                 }
             ]
         },
         {
             "type": "ExpansionPanel",
-            "caption": "Dokumentation & Hilfe",
+            "name": "DocPanel",
+            "caption": "📖 Dokumentation & Hilfe",
             "expanded": false,
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Szenariorechner Version 0.1.0-beta.1. Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenario \"Dynamischer Vertrag vs. Festpreis\", weitere Szenarien (Speichergröße, §14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
+                    "name": "DocVersionLabel",
+                    "caption": "ℹ️ Szenariorechner"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenario \"Dynamischer Vertrag vs. Festpreis\", weitere Szenarien (Speichergröße, §14a-Beitritt, Förderende) folgen. Details im KONZEPT.md des Repos."
                 }
             ]
         },
@@ -94,13 +100,17 @@
             ]
         },
         {
-            "type": "ExpansionPanel",
-            "caption": "Symcon-Forum",
-            "expanded": false,
+            "type": "RowLayout",
+            "name": "ForumHint",
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Fragen und Rückmeldungen im Symcon-Forum-Thread zu diesem Modul (Link folgt nach Store-Veröffentlichung)."
+                    "caption": "💬 Fragen und Rückmeldungen im Symcon-Forum-Thread zu diesem Modul (Link folgt nach Store-Veröffentlichung)."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Nicht mehr anzeigen",
+                    "onClick": "SZR_DismissForumHint($id);"
                 }
             ]
         }

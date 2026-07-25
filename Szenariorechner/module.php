@@ -43,27 +43,58 @@ class Szenariorechner extends IPSModule
 
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
+        $this->RegisterAttributeBoolean('ForumHintGone', false);
     }
 
     public function GetConfigurationForm()
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
-        if ($this->ReadAttributeString('ChangelogSeen') === '0.1') {
-            foreach ($form['elements'] as &$el) {
-                if (($el['type'] ?? '') === 'ExpansionPanel' && str_contains($el['caption'] ?? '', 'Neu in Version')) {
-                    $el['expanded'] = false;
-                    $el['visible'] = false;
-                }
-            }
-            unset($el);
-        }
+
+        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.1');
+        $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
+        $this->injectVersionLabel($form);
+
         return json_encode($form);
+    }
+
+    // Versionszeile im Doku-Panel dauerhaft sichtbar (Verbund-Konvention), aus
+    // library.json ermittelt statt fest im Formular verdrahtet.
+    private function injectVersionLabel(array &$form): void
+    {
+        $lib = @IPS_GetLibrary('{9B2E1A3F-6C7D-4E8B-9A1C-2D3E4F5A6B7C}');
+        $verTxt = (is_array($lib) && isset($lib['Version']))
+            ? 'ℹ️ Szenariorechner Version ' . $lib['Version'] . ' (Build ' . ($lib['Build'] ?? '?') . ')'
+            : 'ℹ️ Szenariorechner';
+        foreach ($form['elements'] as &$el) {
+            if (($el['name'] ?? '') === 'DocVersionLabel') {
+                $el['caption'] = $verTxt;
+                return;
+            }
+        }
+        unset($el);
+    }
+
+    private function setElementVisible(array &$form, string $name, bool $visible): void
+    {
+        foreach ($form['elements'] as &$el) {
+            if (($el['name'] ?? '') === $name) {
+                $el['visible'] = $visible;
+                return;
+            }
+        }
+        unset($el);
     }
 
     public function DismissChangelog(string $version)
     {
         $this->WriteAttributeString('ChangelogSeen', $version);
         $this->UpdateFormField('ChangelogPanel', 'visible', false);
+    }
+
+    public function DismissForumHint()
+    {
+        $this->WriteAttributeBoolean('ForumHintGone', true);
+        $this->UpdateFormField('ForumHint', 'visible', false);
     }
 
     public function ApplyChanges()
