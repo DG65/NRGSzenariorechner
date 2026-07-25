@@ -6,7 +6,7 @@ Marktdaten nach, was verschiedene Entscheidungen gebracht hätten bzw. bringen w
 Reiner Rechner, kein Regler — analog zur Rollenteilung von SteuerboxHub: erfasst/rechnet,
 setzt nichts durch.
 
-Modul-Präfix: `SZR`. Repo: `github.com/DG65/Szenariorechner`.
+Modul-Präfix: `SZR`. Repo: `github.com/DG65/NRGSzenariorechner`.
 
 ## Datenquellen im Verbund (bereits vorhanden, alle hinter `function_exists()`)
 
