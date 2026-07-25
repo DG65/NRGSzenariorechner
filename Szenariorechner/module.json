@@ -1,10 +1,11 @@
 {
     "id": "{7F3A9C1E-4B5D-4A6F-8C2E-1D9B3A7E5F4C}",
     "library": "{9B2E1A3F-6C7D-4E8B-9A1C-2D3E4F5A6B7C}",
-    "name": "Szenariorechner",
+    "name": "NRGSzenariorechner",
     "type": 3,
     "vendor": "",
     "aliases": [
+        "Szenariorechner",
         "Was-wäre-wenn-Rechner",
         "Wirtschaftlichkeitsrechner"
     ],
