@@ -183,6 +183,11 @@
                     "type": "PasswordTextBox",
                     "name": "NetztransparenzClientSecretInput",
                     "caption": "Client-Secret (einmalig eingeben)"
+                },
+                {
+                    "type": "Button",
+                    "caption": "Verbindung testen",
+                    "onClick": "SZR_TestNetztransparenzConnection($id);"
                 }
             ]
         },

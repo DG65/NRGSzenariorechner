@@ -76,6 +76,8 @@ class Szenariorechner extends IPSModule
         $this->RegisterAttributeString('NetztransparenzClientSecret', '');
         $this->RegisterAttributeString('NetztransparenzToken', '');
         $this->RegisterAttributeInteger('NetztransparenzTokenExpires', 0);
+        $this->RegisterAttributeInteger('NetztransparenzLastTestSuccess', 0);
+        $this->RegisterAttributeString('NetztransparenzLastTestError', '');
 
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
@@ -153,6 +155,69 @@ class Szenariorechner extends IPSModule
     }
 
     /**
+     * Prüft die hinterlegten Netztransparenz-Zugangsdaten mit einem echten
+     * Token- und Datenabruf (aktueller Monat, Marktwert Solar) und schreibt
+     * Erfolg/Fehler samt Zeitpunkt ins Attribut, damit ein Laie im Formular
+     * eine verständliche Erfolgsmeldung statt eines rohen Instanzstatus sieht
+     * (Rückmeldung Dietmar/EMS-Koordination, 25.07.2026). Wird automatisch
+     * nach jeder Übernahme neuer Zugangsdaten aufgerufen (ApplyChanges) und
+     * kann zusätzlich manuell über den Formular-Button angestoßen werden.
+     */
+    public function TestNetztransparenzConnection(): array
+    {
+        $now = time();
+        $error = '';
+
+        $token = $this->getNetztransparenzToken();
+        if ($token === null) {
+            $error = 'Zugangsdaten fehlen oder Token-Abruf fehlgeschlagen';
+        } else {
+            $year = (int) date('Y', $now);
+            $month = (int) date('n', $now);
+            $rows = $this->getMarktwertSolar($year, $month, $year, $month);
+            if ($rows === null) {
+                $error = 'Token-Abruf erfolgreich, aber Testabruf der Marktwerte fehlgeschlagen';
+            }
+        }
+
+        if ($error === '') {
+            $this->WriteAttributeInteger('NetztransparenzLastTestSuccess', $now);
+            $this->WriteAttributeString('NetztransparenzLastTestError', '');
+        } else {
+            $this->WriteAttributeString('NetztransparenzLastTestError', $error);
+            $this->SendDebug(__FUNCTION__, $error, 0);
+        }
+
+        // Nur wirksam, wenn das Formular gerade offen ist (Button-Aufruf) —
+        // bei automatischem Aufruf aus ApplyChanges ist das Formular meist
+        // geschlossen, UpdateFormField schlägt dann harmlos fehl (@).
+        @$this->UpdateFormField('NetztransparenzStatusLabel', 'caption', $this->buildNetztransparenzStatusCaption());
+
+        return ['success' => $error === '', 'error' => $error, 'testedAt' => $error === '' ? $now : null];
+    }
+
+    private function buildNetztransparenzStatusCaption(): string
+    {
+        $hasCredentials = $this->ReadAttributeString('NetztransparenzClientId') !== ''
+            && $this->ReadAttributeString('NetztransparenzClientSecret') !== '';
+        if (!$hasCredentials) {
+            return 'Zugangsdaten fehlen — Szenario "Förderende/Solarspitzengesetz" noch nicht verfügbar.';
+        }
+
+        $lastSuccess = $this->ReadAttributeInteger('NetztransparenzLastTestSuccess');
+        $lastError = $this->ReadAttributeString('NetztransparenzLastTestError');
+
+        if ($lastError !== '') {
+            $suffix = $lastSuccess > 0 ? ' (zuletzt erfolgreich: ' . date('d.m.Y H:i', $lastSuccess) . ')' : '';
+            return "⚠️ Verbindung fehlgeschlagen: $lastError$suffix";
+        }
+        if ($lastSuccess > 0) {
+            return '✅ Verbindung zu Netztransparenz.de erfolgreich getestet, letzter Abruf: ' . date('d.m.Y H:i', $lastSuccess);
+        }
+        return 'Zugangsdaten hinterlegt, aber noch nicht getestet — Schaltfläche "Verbindung testen" verwenden.';
+    }
+
+    /**
      * Übernimmt einmalig eingegebene Netztransparenz-Zugangsdaten aus den
      * maskierten Property-Feldern ins Attribut und leert die Property-Felder
      * anschließend. Rückgabe true, wenn eine Übernahme stattgefunden hat (der
@@ -178,6 +243,11 @@ class Szenariorechner extends IPSModule
         IPS_SetProperty($this->InstanceID, 'NetztransparenzClientIdInput', '');
         IPS_SetProperty($this->InstanceID, 'NetztransparenzClientSecretInput', '');
         IPS_ApplyChanges($this->InstanceID);
+
+        // Sofort testen, statt den Nutzer raten zu lassen, ob die neu
+        // eingegebenen Zugangsdaten funktionieren (Rückmeldung Dietmar/EMS-
+        // Koordination, 25.07.2026).
+        $this->TestNetztransparenzConnection();
         return true;
     }
 
@@ -200,11 +270,7 @@ class Szenariorechner extends IPSModule
 
     private function injectNetztransparenzStatus(array &$form): void
     {
-        $hasCredentials = $this->ReadAttributeString('NetztransparenzClientId') !== ''
-            && $this->ReadAttributeString('NetztransparenzClientSecret') !== '';
-        $caption = $hasCredentials
-            ? 'ℹ️ Zugangsdaten hinterlegt — Szenario "Förderende/Solarspitzengesetz" folgt.'
-            : 'Zugangsdaten fehlen — Szenario "Förderende/Solarspitzengesetz" noch nicht verfügbar.';
+        $caption = $this->buildNetztransparenzStatusCaption();
         foreach ($form['elements'] as &$el) {
             if (($el['name'] ?? '') === 'NetztransparenzStatusLabel') {
                 $el['caption'] = $caption;
