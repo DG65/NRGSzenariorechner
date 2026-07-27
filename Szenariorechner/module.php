@@ -172,11 +172,20 @@ class Szenariorechner extends IPSModule
         if ($token === null) {
             $error = 'Zugangsdaten fehlen oder Token-Abruf fehlgeschlagen';
         } else {
-            $year = (int) date('Y', $now);
-            $month = (int) date('n', $now);
-            $rows = $this->getMarktwertSolar($year, $month, $year, $month);
+            // Letzten VOLLSTÄNDIGEN Monat abfragen, nicht den laufenden:
+            // Monatsmarktwerte werden laut API-Doku nur 1×/Monat veröffentlicht,
+            // der laufende Monat liefert daher regelmäßig eine leere Antwort,
+            // die sonst fälschlich als Verbindungsfehler gedeutet würde.
+            $lastMonthTs = strtotime('first day of last month', $now);
+            $year = (int) date('Y', $lastMonthTs);
+            $month = (int) date('n', $lastMonthTs);
+            $fetchError = null;
+            $rows = $this->getMarktwertSolar($year, $month, $year, $month, $fetchError);
             if ($rows === null) {
-                $error = 'Token-Abruf erfolgreich, aber Testabruf der Marktwerte fehlgeschlagen';
+                $error = 'Token-Abruf erfolgreich, aber Testabruf der Marktwerte fehlgeschlagen'
+                    . ($fetchError !== null ? " ($fetchError)" : '');
+            } elseif (count($rows) === 0) {
+                $error = "Token-Abruf erfolgreich, aber keine Marktwerte für $month/$year erhalten (evtl. noch nicht veröffentlicht)";
             }
         }
 
@@ -704,18 +713,6 @@ class Szenariorechner extends IPSModule
     }
 
     // -----------------------------------------------------------------
-    //  Hilfsfunktionen
-    // -----------------------------------------------------------------
-
-    /**
-     * Liefert kWh je Stunde (Unix-Stundenbeginn => kWh) für eine Archiv-Variable
-     * im Zeitraum [$start, $end). $isCounter = true: Avg ist bereits der
-     * Periodenverbrauch (kWh). $isCounter = false: Avg ist mittlere Leistung
-     * (W), wird auf kWh der Stunde umgerechnet. Rückgabe null bei fehlendem
-     * Archiv oder fehlenden Daten (Aufrufer bricht dann ab, statt mit einer
-     * leeren/irreführenden Rechnung fortzufahren).
-     */
-    // -----------------------------------------------------------------
     //  Netztransparenz.de-Client (Vorbereitung Szenario 4)
     // -----------------------------------------------------------------
     // NICHT als eigenständige Kopplung hinter function_exists() zu sichern
@@ -784,10 +781,18 @@ class Szenariorechner extends IPSModule
      * getrennt) und liefert die geparsten Zeilen als assoziative Arrays
      * (Kopfzeile als Schlüssel). Rückgabe null ohne Token oder bei Fehler.
      */
-    private function fetchNetztransparenzCsv(string $path, array $query = []): ?array
+    /**
+     * $errorOut (Referenz) erhält bei Rückgabe null einen menschenlesbaren
+     * Grund — insbesondere den HTTP-Status, damit "Endpunkt/Berechtigung
+     * falsch" (4xx) von "für den Zeitraum liegen noch keine Daten vor" (leerer
+     * 200er-Body, z. B. laufender Monat, Monatsmarktwerte werden nur 1×/Monat
+     * veröffentlicht) unterscheidbar ist.
+     */
+    private function fetchNetztransparenzCsv(string $path, array $query = [], ?string &$errorOut = null): ?array
     {
         $token = $this->getNetztransparenzToken();
         if ($token === null) {
+            $errorOut = 'kein gültiger Token';
             return null;
         }
         $url = self::NETZTRANSPARENZ_BASE_URL . '/' . ltrim($path, '/');
@@ -803,9 +808,26 @@ class Szenariorechner extends IPSModule
             ],
         ]);
         $response = @file_get_contents($url, false, $context);
-        if ($response === false || $response === '') {
-            $this->SendDebug(__FUNCTION__, "Abruf fehlgeschlagen: $url", 0);
+        $statusLine = $http_response_header[0] ?? '';
+        $statusCode = 0;
+        if (preg_match('/HTTP\/\S+\s+(\d+)/', $statusLine, $m)) {
+            $statusCode = (int) $m[1];
+        }
+
+        if ($response === false) {
+            $errorOut = "keine Antwort (HTTP $statusCode, $url)";
+            $this->SendDebug(__FUNCTION__, $errorOut, 0);
             return null;
+        }
+        if ($statusCode >= 400) {
+            $errorOut = "HTTP $statusCode von $url" . ($response !== '' ? (': ' . substr($response, 0, 200)) : '');
+            $this->SendDebug(__FUNCTION__, $errorOut, 0);
+            return null;
+        }
+        if (trim($response) === '') {
+            // Kein Fehler, aber keine Daten für den angefragten Zeitraum
+            // (z. B. laufender Monat, Monatsmarktwerte erscheinen erst danach).
+            return [];
         }
 
         $lines = preg_split('/\r\n|\r|\n/', trim($response));
@@ -830,14 +852,14 @@ class Szenariorechner extends IPSModule
      * 'marktwertSolarCtKwh' (float), 'negativeStunden1h'/'3h'/'4h'/'6h' (bool|null).
      * Rückgabe null ohne Zugangsdaten oder bei Fehler.
      */
-    private function getMarktwertSolar(int $yearFrom, int $monthFrom, int $yearTo, int $monthTo): ?array
+    private function getMarktwertSolar(int $yearFrom, int $monthFrom, int $yearTo, int $monthTo, ?string &$errorOut = null): ?array
     {
         $rows = $this->fetchNetztransparenzCsv('marktpraemie', [
             'yearFrom'  => $yearFrom,
             'monthFrom' => str_pad((string) $monthFrom, 2, '0', STR_PAD_LEFT),
             'yearTo'    => $yearTo,
             'monthTo'   => str_pad((string) $monthTo, 2, '0', STR_PAD_LEFT),
-        ]);
+        ], $errorOut);
         if ($rows === null) {
             return null;
         }
@@ -855,6 +877,18 @@ class Szenariorechner extends IPSModule
         return $result;
     }
 
+    // -----------------------------------------------------------------
+    //  Hilfsfunktionen
+    // -----------------------------------------------------------------
+
+    /**
+     * Liefert kWh je Stunde (Unix-Stundenbeginn => kWh) für eine Archiv-Variable
+     * im Zeitraum [$start, $end). $isCounter = true: Avg ist bereits der
+     * Periodenverbrauch (kWh). $isCounter = false: Avg ist mittlere Leistung
+     * (W), wird auf kWh der Stunde umgerechnet. Rückgabe null bei fehlendem
+     * Archiv oder fehlenden Daten (Aufrufer bricht dann ab, statt mit einer
+     * leeren/irreführenden Rechnung fortzufahren).
+     */
     private function hourlyKwhSeries(int $varID, bool $isCounter, int $start, int $end): ?array
     {
         if ($varID <= 0 || !IPS_VariableExists($varID)) {
