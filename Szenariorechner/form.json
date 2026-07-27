@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neues Szenario \"§14a-Beitritt\": wägt die Netzentgelt-Ersparnis gegen eine grob geschätzte Dimm-Kostenannahme ab (Nutzereingabe, da SteuerboxHub noch keine Ereignis-Historie liefert)."
+                    "caption": "Neu: vier Ergebnisvariablen an der Instanz (Netztransparenz-Status, Ersparnis dynamischer Vertrag, beste Speichergrößen-Zusatzersparnis, §14a-Netto-Nutzen) — werden täglich sowie sofort nach jeder Berechnung aktualisiert."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.3');"
+                    "onClick": "SZR_DismissChangelog($id, '0.4');"
                 }
             ]
         },

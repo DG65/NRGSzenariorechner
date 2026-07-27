@@ -82,13 +82,36 @@ class Szenariorechner extends IPSModule
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
         $this->RegisterAttributeBoolean('ForumHintGone', false);
+
+        $this->RegisterVariables();
+
+        // Täglich alle verfügbaren Szenarien neu rechnen, damit die
+        // Kern-Ergebnisvariablen nicht dauerhaft veraltet stehen bleiben —
+        // reiner Komfort für den schnellen Blick auf die Instanz, die
+        // eigentliche Darstellung bleibt Sache des Dashboard-Moduls.
+        $this->RegisterTimer('RefreshScenarios', 0, 'SZR_RefreshScenarioVariables($_IPS[\'TARGET\']);');
+    }
+
+    /**
+     * Ergebnisvariablen (Rückmeldung Dietmar, 27.07.2026: ohne diese ist auf
+     * der Instanz selbst nichts sichtbar). Bewusst nur eine Kern-Kennzahl je
+     * Szenario, keine vollständige Ergebnisdarstellung — die bleibt Sache des
+     * Dashboard-Moduls (siehe KONZEPT.md, Abschnitt "Ergebnis-Darstellung").
+     */
+    private function RegisterVariables(): void
+    {
+        $pos = 0;
+        $this->MaintainVariable('NetztransparenzStatus', $this->Translate('Netztransparenz connection status'), VARIABLETYPE_STRING, '', $pos++, true);
+        $this->MaintainVariable('DynamicTariffSavingsEur', $this->Translate('Savings dynamic tariff vs. fixed price (last 30 days, EUR)'), VARIABLETYPE_FLOAT, '', $pos++, true);
+        $this->MaintainVariable('StorageSizeAdditionalSavingsEur', $this->Translate('Best additional storage size saving found (EUR/year)'), VARIABLETYPE_FLOAT, '', $pos++, true);
+        $this->MaintainVariable('Paragraph14aNetBenefitEur', $this->Translate('Section 14a net benefit (EUR/year)'), VARIABLETYPE_FLOAT, '', $pos++, true);
     }
 
     public function GetConfigurationForm()
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.3');
+        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.4');
         $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
         $this->injectVersionLabel($form);
         $this->injectNetztransparenzStatus($form);
@@ -197,10 +220,13 @@ class Szenariorechner extends IPSModule
             $this->SendDebug(__FUNCTION__, $error, 0);
         }
 
+        $caption = $this->buildNetztransparenzStatusCaption();
+        $this->SetValue('NetztransparenzStatus', $caption);
+
         // Nur wirksam, wenn das Formular gerade offen ist (Button-Aufruf) —
         // bei automatischem Aufruf aus ApplyChanges ist das Formular meist
         // geschlossen, UpdateFormField schlägt dann harmlos fehl (@).
-        @$this->UpdateFormField('NetztransparenzStatusLabel', 'caption', $this->buildNetztransparenzStatusCaption());
+        @$this->UpdateFormField('NetztransparenzStatusLabel', 'caption', $caption);
 
         return ['success' => $error === '', 'error' => $error, 'testedAt' => $error === '' ? $now : null];
     }
@@ -342,6 +368,43 @@ class Szenariorechner extends IPSModule
         if ($message !== '') {
             $this->SendDebug(__FUNCTION__, $message, 0);
         }
+
+        $this->SetTimerInterval('RefreshScenarios', 24 * 60 * 60 * 1000);
+        // Sofort einmal rechnen statt bis zu 24h auf den ersten Wert zu warten.
+        $this->RefreshScenarioVariables();
+    }
+
+    /**
+     * Rechnet alle verfügbaren Szenarien einmal durch und schreibt je Szenario
+     * eine Kern-Kennzahl in die zugehörige Ergebnisvariable (siehe
+     * RegisterVariables()). Läuft täglich per Timer, zusätzlich sofort nach
+     * jedem ApplyChanges. Nicht verfügbare Szenarien (siehe
+     * GetAvailableScenarios()) werden übersprungen, ihre Variable bleibt beim
+     * letzten bekannten Wert stehen.
+     */
+    public function RefreshScenarioVariables(): void
+    {
+        foreach ($this->GetAvailableScenarios() as $scenario) {
+            if (!$scenario['available']) {
+                continue;
+            }
+            switch ($scenario['type']) {
+                case 'dynamicTariff':
+                    $this->CalculateDynamicTariffScenario(30);
+                    break;
+                case 'storageSize':
+                    $this->CalculateStorageSizeScenario(30);
+                    break;
+                case 'paragraph14a':
+                    $this->CalculateParagraph14aScenario();
+                    break;
+            }
+        }
+
+        if ($this->ReadAttributeString('NetztransparenzClientId') !== ''
+            && $this->ReadAttributeString('NetztransparenzClientSecret') !== '') {
+            $this->TestNetztransparenzConnection();
+        }
     }
 
     // -----------------------------------------------------------------
@@ -472,6 +535,7 @@ class Szenariorechner extends IPSModule
         $result['dataComplete'] = ($hoursMissingPrice === 0) && (count($hourlyKwh) > 0);
 
         $this->WriteAttributeString('LastEvaluation', json_encode($result));
+        $this->SetValue('DynamicTariffSavingsEur', $result['savingsEur']);
 
         return $result;
     }
@@ -618,6 +682,19 @@ class Szenariorechner extends IPSModule
         }
 
         $result['dataComplete'] = count($hours) > 0;
+
+        // Kern-Kennzahl für die Ergebnisvariable: die beste gefundene
+        // Zusatzersparnis unter den GRÖSSEREN Stufen als der aktuellen
+        // Speichergröße (0, wenn keine Vergrößerung sich lohnt).
+        $bestAdditionalSavings = 0.0;
+        foreach ($result['sizes'] as $entry) {
+            if ($entry['storageKwh'] > $currentStorage
+                && ($entry['additionalSavingsEurPerYear'] ?? 0.0) > $bestAdditionalSavings) {
+                $bestAdditionalSavings = $entry['additionalSavingsEurPerYear'];
+            }
+        }
+        $this->SetValue('StorageSizeAdditionalSavingsEur', $bestAdditionalSavings);
+
         return $result;
     }
 
@@ -695,6 +772,8 @@ class Szenariorechner extends IPSModule
         }
 
         $dimmKostenSchaetzungJahr = $betroffeneEnergieJahrKwh * $mittlererPreisCtKwh / 100.0;
+        $nettoNutzenJahr = round($ersparnis - $dimmKostenSchaetzungJahr, 2);
+        $this->SetValue('Paragraph14aNetBenefitEur', $nettoNutzenJahr);
 
         return [
             'contractVersion'           => '1.0',
@@ -706,7 +785,7 @@ class Szenariorechner extends IPSModule
             'betroffeneEnergieJahrKwh'  => round($betroffeneEnergieJahrKwh, 1),
             'mittlererPreisCtKwh'       => round($mittlererPreisCtKwh, 2),
             'dimmKostenSchaetzungJahr'  => round($dimmKostenSchaetzungJahr, 2),
-            'nettoNutzenJahr'           => round($ersparnis - $dimmKostenSchaetzungJahr, 2),
+            'nettoNutzenJahr'           => $nettoNutzenJahr,
             'dimmCostIsRoughEstimate'   => true,
             'sbhLiveHistorieVerfuegbar' => false,
         ];

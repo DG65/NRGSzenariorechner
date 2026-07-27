@@ -1,0 +1,10 @@
+{
+  "translations": {
+    "de": {
+      "Netztransparenz connection status": "Netztransparenz-Verbindung",
+      "Savings dynamic tariff vs. fixed price (last 30 days, EUR)": "Ersparnis dynamischer Vertrag vs. Festpreis (letzte 30 Tage, €)",
+      "Best additional storage size saving found (EUR/year)": "Beste gefundene Zusatzersparnis Speichervergrößerung (€/Jahr)",
+      "Section 14a net benefit (EUR/year)": "Netto-Nutzen §14a-Beitritt (€/Jahr)"
+    }
+  }
+}

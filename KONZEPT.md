@@ -180,6 +180,16 @@ Festlegung des exakten Rückgabeformats, damit das Dashboard es direkt konsumier
 (gleiche Kopplung wie EMS↔Hubs: Rechner liefert Daten, Dashboard stellt dar, kein
 Rollentausch).
 
+**Ergänzt 27.07.2026 (Rückmeldung Dietmar):** Ohne jede eigene Variable war auf der
+Instanz selbst nichts sichtbar — Nutzerbestätigung: vier Kern-Ergebnisvariablen
+(`NetztransparenzStatus`, `DynamicTariffSavingsEur`, `StorageSizeAdditionalSavingsEur`,
+`Paragraph14aNetBenefitEur`) ergänzt, je eine Kennzahl pro Szenario, kein vollständiges
+Ergebnis-Objekt als Variable. Werden durch einen täglichen Timer
+(`SZR_RefreshScenarioVariables`) sowie unmittelbar bei jedem `Calculate*Scenario()`-Aufruf
+aktualisiert. Bleibt bewusst schmal — die vollständige Darstellung (alle Felder, alle
+Speichergrößen-Stufen usw.) bleibt Aufgabe des Dashboards, das weiterhin die
+`Calculate*Scenario()`-Funktionen direkt aufruft.
+
 ## Bauplan (Phasen, jede lauffähig)
 
 1. **Dynamischer Vertrag** — `SZR_CalculateDynamicTariffScenario()`. Nutzt nur
