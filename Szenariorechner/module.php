@@ -788,7 +788,7 @@ class Szenariorechner extends IPSModule
      * 200er-Body, z. B. laufender Monat, Monatsmarktwerte werden nur 1×/Monat
      * veröffentlicht) unterscheidbar ist.
      */
-    private function fetchNetztransparenzCsv(string $path, array $query = [], ?string &$errorOut = null): ?array
+    private function fetchNetztransparenzCsv(string $path, array $query = [], ?string &$errorOut = null, ?int &$statusOut = null): ?array
     {
         $token = $this->getNetztransparenzToken();
         if ($token === null) {
@@ -813,6 +813,7 @@ class Szenariorechner extends IPSModule
         if (preg_match('/HTTP\/\S+\s+(\d+)/', $statusLine, $m)) {
             $statusCode = (int) $m[1];
         }
+        $statusOut = $statusCode;
 
         if ($response === false) {
             $errorOut = "keine Antwort (HTTP $statusCode, $url)";
@@ -854,12 +855,31 @@ class Szenariorechner extends IPSModule
      */
     private function getMarktwertSolar(int $yearFrom, int $monthFrom, int $yearTo, int $monthTo, ?string &$errorOut = null): ?array
     {
-        $rows = $this->fetchNetztransparenzCsv('marktpraemie', [
+        $query = [
             'yearFrom'  => $yearFrom,
             'monthFrom' => str_pad((string) $monthFrom, 2, '0', STR_PAD_LEFT),
             'yearTo'    => $yearTo,
             'monthTo'   => str_pad((string) $monthTo, 2, '0', STR_PAD_LEFT),
-        ], $errorOut);
+        ];
+
+        $status = null;
+        $rows = $this->fetchNetztransparenzCsv('marktpraemie', $query, $errorOut, $status);
+        if ($rows === null && $status === 404) {
+            // Die API-Doku (v1.14, 07.02.2025) vermerkt selbst eine "Korrektur
+            // der Benennung des Endpunkts für die Monatsmarktprämie" — genau
+            // dieser Endpunkt wurde also schon einmal umbenannt. Bei 404 auf
+            // den dokumentierten Kleinschreib-Pfad daher testweise die
+            // Großschreibvariante versuchen (Muster der übrigen Endpunkte:
+            // "Jahresmarktpraemie", "Kapazitaetsreserve", "Spotmarktpreise").
+            $this->SendDebug(__FUNCTION__, '404 auf "marktpraemie" — versuche "Marktpraemie"', 0);
+            $fallbackError = null;
+            $rows = $this->fetchNetztransparenzCsv('Marktpraemie', $query, $fallbackError, $status);
+            if ($rows !== null) {
+                $errorOut = null;
+            } else {
+                $errorOut .= " / Fallback \"Marktpraemie\": $fallbackError";
+            }
+        }
         if ($rows === null) {
             return null;
         }
