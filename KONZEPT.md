@@ -42,9 +42,24 @@ im Formular als bekannte Einschränkung vermerkt.
 - **Rate-Limit:** 2 Anfragen/Sekunde/Quell-IP, bei Überschreitung 2h-IP-Sperre. Für
   seltene Tages-/Wochenabrufe unkritisch, aber: Zugriffe cachen, nicht bei jedem
   Formular-Öffnen neu abrufen.
+- **WICHTIG, per Live-Test an Instanz #42890 am 27.07.2026 richtiggestellt:** Die
+  PDF-Doku (v1.14) beschreibt für `marktpraemie` Query-Parameter
+  (`?yearFrom=&monthFrom=&yearTo=&monthTo=`) — das führt live zu HTTP 404. Die
+  öffentliche Swagger-UI (https://api-portal.netztransparenz.de/public-swagger-ui,
+  ohne Login einsehbar, Server `https://ds.netztransparenz.de`) zeigt den tatsächlich
+  gültigen Pfad: **`GET /api/v1/data/marktpraemie/{monthFrom}/{yearFrom}/{monthTo}/{yearTo}`**
+  — Monat/Jahr als PFAD-Segmente, nicht als Query-String, und in dieser Reihenfolge
+  (Monat vor Jahr). Andere Endpunkte derselben Familie folgen demselben Muster
+  (`Jahresmarktpraemie/{year}`, `redispatch/{dateFrom}/{dateTo}` usw.). Vor jeder
+  neuen Endpunkt-Anbindung die Swagger-UI gegenprüfen, nicht blind aus der PDF-Doku
+  übernehmen — sie kann hinter der Live-API zurückliegen.
 - **Relevante Endpunkte für diesen Rechner:**
-  - `GET api/v1/data/marktpraemie` — Monatsmarktwerte (u.a. "MW Solar in ct/kWh"),
-    inkl. Flags "Negative Stunden (1H/3H/4H/6H)" je Monat.
+  - `GET api/v1/data/marktpraemie/{monthFrom}/{yearFrom}/{monthTo}/{yearTo}` —
+    Monatsmarktwerte (u.a. "MW Solar in ct/kWh"), inkl. Flags "Negative Preise
+    (1H/2H/3H/4H/6H/15MIN/2CT)" je Monat (Spaltenname laut Doku-Historie 1.18/1.23
+    inzwischen "Negative Preise (XH)", nicht mehr "Negative Stunden (XH)" — beim
+    CSV-Parsing beachten, falls der Live-Header vom Stand 07.02.2025 abweicht, den
+    dieses Modul bisher zugrunde legt).
   - `GET api/v1/data/Jahresmarktpraemie` — Jahresmarktwerte, gleiche Struktur pro Jahr.
   - `GET api/v1/data/NegativePreise/{1|3|4|6}` — Stunden mit negativem Spotpreis nach
     der jeweiligen X-Stunden-Regel (viertelstundenscharfe EPEX-Werte selbst liefert diese

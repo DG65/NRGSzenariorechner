@@ -718,9 +718,10 @@ class Szenariorechner extends IPSModule
     // NICHT als eigenständige Kopplung hinter function_exists() zu sichern
     // (das gilt für Verbund-Module) — das ist eine echte externe HTTP-API,
     // daher direkte Fehlerbehandlung statt Guard. Client_ID/Secret siehe
-    // Create()/takeOverNetztransparenzCredentials(). UNGETESTET gegen echte
-    // Zugangsdaten (Stand: Client_ID/Secret liegen noch nicht vor, siehe
-    // KONZEPT.md Abschnitt Netztransparenz.de-API).
+    // Create()/takeOverNetztransparenzCredentials(). Endpunkt-Pfade gegen die
+    // öffentliche Swagger-UI verifiziert (27.07.2026, siehe KONZEPT.md
+    // Abschnitt Netztransparenz.de-API — PFAD-Segmente, nicht Query-String,
+    // abweichend von der älteren PDF-Doku).
 
     private const NETZTRANSPARENZ_TOKEN_URL = 'https://identity.netztransparenz.de/users/connect/token';
     private const NETZTRANSPARENZ_BASE_URL = 'https://ds.netztransparenz.de/api/v1/data';
@@ -850,36 +851,29 @@ class Szenariorechner extends IPSModule
     /**
      * Marktwert Solar (Monatsmarktwerte, Format 12) für den angegebenen
      * Monatsbereich. Rückgabe je Monat: 'monat' (String "M/JJJJ"),
-     * 'marktwertSolarCtKwh' (float), 'negativeStunden1h'/'3h'/'4h'/'6h' (bool|null).
+     * 'marktwertSolarCtKwh' (float), 'negativePreise1h'/'2h'/'3h'/'4h'/'6h' (bool).
      * Rückgabe null ohne Zugangsdaten oder bei Fehler.
      */
     private function getMarktwertSolar(int $yearFrom, int $monthFrom, int $yearTo, int $monthTo, ?string &$errorOut = null): ?array
     {
-        $query = [
-            'yearFrom'  => $yearFrom,
-            'monthFrom' => str_pad((string) $monthFrom, 2, '0', STR_PAD_LEFT),
-            'yearTo'    => $yearTo,
-            'monthTo'   => str_pad((string) $monthTo, 2, '0', STR_PAD_LEFT),
-        ];
+        // Live-API (öffentliche Swagger-UI, https://ds.netztransparenz.de,
+        // Stand 27.07.2026) erwartet PFAD-Segmente in dieser Reihenfolge,
+        // NICHT Query-Parameter:
+        //   GET /api/v1/data/marktpraemie/{monthFrom}/{yearFrom}/{monthTo}/{yearTo}
+        // Weicht von der älteren PDF-Doku (v1.14, query-string yearFrom=/
+        // monthFrom=) ab — daher der ursprüngliche 404. Andere Endpunkte in
+        // dieser API-Familie (Jahresmarktpraemie/{year}, redispatch/{dateFrom}/
+        // {dateTo} usw.) folgen demselben Pfad-Segment-Muster.
+        $path = sprintf(
+            'marktpraemie/%s/%d/%s/%d',
+            str_pad((string) $monthFrom, 2, '0', STR_PAD_LEFT),
+            $yearFrom,
+            str_pad((string) $monthTo, 2, '0', STR_PAD_LEFT),
+            $yearTo
+        );
 
         $status = null;
-        $rows = $this->fetchNetztransparenzCsv('marktpraemie', $query, $errorOut, $status);
-        if ($rows === null && $status === 404) {
-            // Die API-Doku (v1.14, 07.02.2025) vermerkt selbst eine "Korrektur
-            // der Benennung des Endpunkts für die Monatsmarktprämie" — genau
-            // dieser Endpunkt wurde also schon einmal umbenannt. Bei 404 auf
-            // den dokumentierten Kleinschreib-Pfad daher testweise die
-            // Großschreibvariante versuchen (Muster der übrigen Endpunkte:
-            // "Jahresmarktpraemie", "Kapazitaetsreserve", "Spotmarktpreise").
-            $this->SendDebug(__FUNCTION__, '404 auf "marktpraemie" — versuche "Marktpraemie"', 0);
-            $fallbackError = null;
-            $rows = $this->fetchNetztransparenzCsv('Marktpraemie', $query, $fallbackError, $status);
-            if ($rows !== null) {
-                $errorOut = null;
-            } else {
-                $errorOut .= " / Fallback \"Marktpraemie\": $fallbackError";
-            }
-        }
+        $rows = $this->fetchNetztransparenzCsv($path, [], $errorOut, $status);
         if ($rows === null) {
             return null;
         }
@@ -888,10 +882,15 @@ class Szenariorechner extends IPSModule
             $result[] = [
                 'monat'               => $row['Monat'] ?? '',
                 'marktwertSolarCtKwh' => isset($row['MW Solar in ct/kWh']) ? (float) str_replace(',', '.', $row['MW Solar in ct/kWh']) : null,
-                'negativeStunden1h'   => ($row['Negative Stunden (1H)'] ?? '') === 'Ja',
-                'negativeStunden3h'   => ($row['Negative Stunden (3H)'] ?? '') === 'Ja',
-                'negativeStunden4h'   => ($row['Negative Stunden (4H)'] ?? '') === 'Ja',
-                'negativeStunden6h'   => ($row['Negative Stunden (6H)'] ?? '') === 'Ja',
+                // Spaltenname seit API-Format-12-Anpassung (Doku-Historie 1.18,
+                // 14.01.2026) "Negative Preise (XH)", nicht mehr "Negative
+                // Stunden (XH)" wie im ursprünglich zugrunde gelegten Stand
+                // v1.14 (07.02.2025).
+                'negativePreise1h'    => ($row['Negative Preise (1H)'] ?? '') === 'Ja',
+                'negativePreise2h'    => ($row['Negative Preise (2H)'] ?? '') === 'Ja',
+                'negativePreise3h'    => ($row['Negative Preise (3H)'] ?? '') === 'Ja',
+                'negativePreise4h'    => ($row['Negative Preise (4H)'] ?? '') === 'Ja',
+                'negativePreise6h'    => ($row['Negative Preise (6H)'] ?? '') === 'Ja',
             ];
         }
         return $result;
