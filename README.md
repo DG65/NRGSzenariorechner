@@ -18,4 +18,4 @@ Reiner Rechner, kein Regler — setzt nichts durch, greift auf Verbund-Verträge
 Konzept für alle vier Szenario-Typen: [KONZEPT.md](KONZEPT.md).
 
 Teil des **NRG-Stack** — welche Modulstände zusammenpassen, steht im
-[Kompatibilitäts-Manifest](https://github.com/DG65/EMS/blob/main/SUITE.md).
+[Kompatibilitäts-Manifest](https://github.com/DG65/NRGEMS/blob/main/SUITE.md).
