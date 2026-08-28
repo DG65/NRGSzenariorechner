@@ -1,7 +1,7 @@
 {
     "id": "{9B2E1A3F-6C7D-4E8B-9A1C-2D3E4F5A6B7C}",
     "author": "DG65",
-    "name": "NRGSzenariorechner for IP-Symcon",
+    "name": "NRG-Stack Szenariorechner",
     "url": "https://github.com/DG65/NRGSzenariorechner",
     "compatibility": {
         "version": "9.0"
