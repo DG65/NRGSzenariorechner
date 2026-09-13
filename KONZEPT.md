@@ -90,11 +90,24 @@ damit sie nicht dreifach (EMS/Szenariorechner/Dashboard) gepflegt werden.
 **Auflösung (siehe `getPlantInfo()`/`get*()`-Methoden in `module.php`):** EMS,
 sofern installiert und die Major passt, sonst eigene Property als Ersatzfeld,
 sonst 0.0/leer ("nicht angegeben") — nie mehr Dietmars Werte als Default.
-`WrKw`/`SpeicherKwh` haben KEIN EMS-Gegenstück (reine Ersatzfelder), `PvKwp`/
-`EinspeiseverguetungCtKwh`/`InbetriebnahmeDatum` werden bei vorhandenem EMS
-überschrieben. `foerderende`/`eegFassung`/`pflichten[]` gibt es NUR über EMS
-(keine eigene Nachbildung der EEG-Tabellenlogik hier) — Datenbasis für das noch
-nicht gebaute Szenario 4 (Förderende/Solarspitzengesetz), siehe dort.
+`WrKw` hat KEIN EMS-Gegenstück und bleibt reines Ersatzfeld (aktuell ohnehin in
+keiner Berechnung verwendet, nur Anlagendaten-Anzeige) — bei Bedarf könnte EMS
+das additiv ergänzen (Quelle wäre InverterHub), bislang aber kein Szenario, das
+es bräuchte. `PvKwp`/`EinspeiseverguetungCtKwh`/`InbetriebnahmeDatum` werden bei
+vorhandenem EMS überschrieben. `foerderende`/`eegFassung`/`pflichten[]` gibt es
+NUR über EMS (keine eigene Nachbildung der EEG-Tabellenlogik hier) — Datenbasis
+für das noch nicht gebaute Szenario 4 (Förderende/Solarspitzengesetz), siehe dort.
+
+**`SpeicherKwh` seit EMS 0.34.2 (`plantinfo` **1.1**, additiv) ebenfalls über
+EMS auflösbar** (`speicherKwh`/`speicherKwhQuelle`): `wechselrichter` (über
+InverterHub gemessen, `bat_capacity`) hat Vorrang, weil belastbar gemessen.
+`einstellung` (EMS-Property `BAT_Capacity_kWh`) wird NICHT blind übernommen —
+das kann laut EMS der nie geänderte Standardwert 10 kWh sein, EMS kann eine
+bewusste Eingabe nicht davon unterscheiden. `getSpeicherKwh()` zieht deshalb bei
+`einstellung` die eigene Property vor, wenn sie gesetzt ist (>0, seit der
+"keine eigene Anlage als Norm"-Umstellung kein unbeabsichtigter Default mehr),
+sonst den EMS-`einstellung`-Wert als Notlösung. Bei `fehlt` (0) wie gehabt die
+eigene Property.
 
 Datumsformat (Verbund-Regel 9b, 13.09.2026): nutzersichtbar **TT.MM.JJJJ**,
 `parseAnlageDatum()`/`formatAnlageDatum()` lesen zusätzlich das alte JJJJ-MM-TT.

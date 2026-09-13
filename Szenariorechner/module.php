@@ -614,7 +614,7 @@ class Szenariorechner extends IPSModule
             'periodDays'        => $days,
             'periodFrom'        => 0,
             'periodTo'          => 0,
-            'currentStorageKwh' => $this->ReadPropertyFloat('SpeicherKwh'),
+            'currentStorageKwh' => $this->getSpeicherKwh(),
             'sizes'             => [],
             'dataComplete'      => false,
         ];
@@ -1104,6 +1104,38 @@ class Szenariorechner extends IPSModule
             return (float) $info['kwp'];
         }
         return $this->ReadPropertyFloat('PvKwp');
+    }
+
+    /**
+     * Speicherkapazität (kWh) — Referenzpunkt für das Speichergrößen-Szenario.
+     * EMS liefert seit 0.34.2 (plantinfo 1.1) `speicherKwh`/`speicherKwhQuelle`:
+     * 'wechselrichter' (über InverterHub gemessen, `bat_capacity`) ist
+     * vertrauenswürdig und hat Vorrang. 'einstellung' (EMS-Property
+     * BAT_Capacity_kWh) kann laut EMS der nie geänderte Standardwert 10 kWh
+     * sein — EMS kann eine bewusste Eingabe nicht von diesem Default
+     * unterscheiden. Deshalb bei 'einstellung' die EIGENE Property vorziehen,
+     * wenn sie gesetzt ist (>0 gilt hier als bewusst gepflegt, da unser
+     * Default seit der "keine eigene Anlage als Norm"-Umstellung 0.0 ist,
+     * nicht mehr Dietmars 40 kWh); ist auch unsere Property 0, ist EMS'
+     * 'einstellung'-Wert immer noch besser als gar keiner. 'fehlt' (0) fällt
+     * wie gehabt auf die eigene Property zurück.
+     */
+    private function getSpeicherKwh(): float
+    {
+        $info = $this->getPlantInfo();
+        $ownValue = $this->ReadPropertyFloat('SpeicherKwh');
+        if ($info === null) {
+            return $ownValue;
+        }
+        $quelle = $info['speicherKwhQuelle'] ?? 'fehlt';
+        $emsValue = (float) ($info['speicherKwh'] ?? 0.0);
+        if ($quelle === 'wechselrichter' && $emsValue > 0.0) {
+            return $emsValue;
+        }
+        if ($quelle === 'einstellung') {
+            return $ownValue > 0.0 ? $ownValue : $emsValue;
+        }
+        return $ownValue;
     }
 
     /** Einspeisevergütung (ct/kWh): EMS > eigene Property > 0.0. */
