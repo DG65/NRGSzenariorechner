@@ -18,20 +18,33 @@
 //            Dimm-Annahmen (reine Nutzereingabe, SBH_GetState liefert noch
 //            keine Historie — bestätigt EMS-Koordination 25.07.2026).
 // Weitere Szenarien (Förderende/Solarspitzengesetz) folgen als eigene
-// SZR_Calculate*Scenario()-Funktionen in späteren Phasen.
+// SZR_Calculate*Scenario()-Funktionen in späteren Phasen — Datenbasis dafür
+// ist jetzt EMS_GetPlantInfo() (foerderende/eegFassung/pflichten), siehe
+// getPlantInfo() unten.
 // ===========================================================================
 
 class Szenariorechner extends IPSModule
 {
+    // EMS führt die Anlagenstammdaten jetzt zentral (EMS 0.34.0, Vertrag
+    // 'plantinfo' 1.0) — Modul-GUID der Zielinstanz, nicht per Präfix raten.
+    private const EMS_MODULE_GUID = '{31C61A7B-28C4-4F97-9651-1A64B3469E3C}';
+
     public function Create()
     {
         parent::Create();
 
-        // ── Anlagendaten (Referenz Memory anlage-dietmar, generisch als Property) ──
-        $this->RegisterPropertyFloat('PvKwp', 9.18);
-        $this->RegisterPropertyFloat('WrKw', 29.9);
-        $this->RegisterPropertyFloat('SpeicherKwh', 40.0);
-        $this->RegisterPropertyFloat('EinspeiseverguetungCtKwh', 18.36);
+        // ── Anlagendaten — NUR Ersatzfeld, wenn kein EMS installiert ist
+        // oder EMS_GetPlantInfo() keine Angabe liefert (getPlantInfo()/
+        // get*()-Zugriffsmethoden unten lösen EMS > eigene Property auf).
+        // Standardwerte bewusst "nicht angegeben" statt Dietmars eigener
+        // Anlage (Verbund-Regel "keine eigene Anlage als Norm", Rückmeldung
+        // EMS-Koordination 13.09.2026).
+        $this->RegisterPropertyFloat('PvKwp', 0.0);
+        $this->RegisterPropertyFloat('WrKw', 0.0);
+        $this->RegisterPropertyFloat('SpeicherKwh', 0.0);
+        $this->RegisterPropertyFloat('EinspeiseverguetungCtKwh', 0.0);
+        // Format TT.MM.JJJJ (Verbund-Regel 9b), altes JJJJ-MM-TT wird beim
+        // Lesen weiterhin erkannt (parseAnlageDatum()).
         $this->RegisterPropertyString('InbetriebnahmeDatum', '');
 
         // ── Datenquelle Netzbezug (historisch, für Szenario 1: dynamischer Vertrag) ──
@@ -111,12 +124,37 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.4');
+        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.5');
         $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
         $this->injectVersionLabel($form);
         $this->injectNetztransparenzStatus($form);
+        $this->injectPlantInfoStatus($form);
 
         return json_encode($form);
+    }
+
+    private function injectPlantInfoStatus(array &$form): void
+    {
+        $info = $this->getPlantInfo();
+        if ($info === null) {
+            $caption = 'Kein EMS gefunden — es gelten die eigenen Angaben unten (0 = nicht angegeben).';
+        } else {
+            $ibn = ($info['inbetriebnahme'] ?? '') !== ''
+                ? $this->formatAnlageDatum((string) $info['inbetriebnahme'])
+                : 'unbekannt';
+            $kwp = ($info['kwp'] ?? 0.0) > 0.0 ? round((float) $info['kwp'], 2) . ' kWp' : 'unbekannt';
+            $verg = ($info['verguetungQuelle'] ?? 'platzhalter') !== 'platzhalter'
+                ? round((float) ($info['verguetungCt'] ?? 0.0), 2) . ' ct/kWh'
+                : 'unbekannt';
+            $caption = "✅ Anlagendaten von EMS übernommen: Inbetriebnahme $ibn, $kwp, Vergütung $verg.";
+        }
+        foreach ($form['elements'] as &$el) {
+            if (($el['name'] ?? '') === 'PlantInfoStatusLabel') {
+                $el['caption'] = $caption;
+                return;
+            }
+        }
+        unset($el);
     }
 
     /**
@@ -607,7 +645,7 @@ class Szenariorechner extends IPSModule
         sort($hours);
 
         $fixedCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
-        $einspeiseCtKwh = $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
+        $einspeiseCtKwh = $this->getVerguetungCt();
         $speicherPreis = $this->ReadPropertyFloat('SpeicherPreisEurKwh');
 
         $stepsKwh = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0];
@@ -1024,5 +1062,117 @@ class Szenariorechner extends IPSModule
             }
         }
         return 0;
+    }
+
+    // -----------------------------------------------------------------
+    //  Anlagendaten — EMS_GetPlantInfo() als führende Quelle
+    // -----------------------------------------------------------------
+    // EMS führt die Anlagendaten seit 0.34.0 zentral (Vertrag 'plantinfo'
+    // 1.0, rein lesend), statt dass EMS/Szenariorechner/Dashboard sie
+    // dreifach halten. Eigenständigkeitsregel: fehlt EMS oder liefert die
+    // Major nicht (contractVersion), fällt jede get*()-Methode auf die
+    // eigene Property zurück — nie hart abbrechen.
+
+    /** @var array|null Request-lokaler Cache, damit ein Aufruf max. 1x EMS fragt. */
+    private $plantInfoCache = null;
+
+    private function getPlantInfo(): ?array
+    {
+        if ($this->plantInfoCache !== null) {
+            return $this->plantInfoCache ?: null;
+        }
+        $this->plantInfoCache = false;
+        if (!function_exists('EMS_GetPlantInfo')) {
+            return null;
+        }
+        $ids = @IPS_GetInstanceListByModuleID(self::EMS_MODULE_GUID);
+        foreach (($ids ?: []) as $id) {
+            $info = @EMS_GetPlantInfo($id);
+            if (is_array($info) && str_starts_with((string) ($info['contractVersion'] ?? '1.0'), '1.')) {
+                $this->plantInfoCache = $info;
+                return $info;
+            }
+        }
+        return null;
+    }
+
+    /** kWp: EMS > eigene Property > 0.0 ("nicht angegeben"). */
+    private function getKwp(): float
+    {
+        $info = $this->getPlantInfo();
+        if ($info !== null && ($info['kwp'] ?? 0.0) > 0.0) {
+            return (float) $info['kwp'];
+        }
+        return $this->ReadPropertyFloat('PvKwp');
+    }
+
+    /** Einspeisevergütung (ct/kWh): EMS > eigene Property > 0.0. */
+    private function getVerguetungCt(): float
+    {
+        $info = $this->getPlantInfo();
+        if ($info !== null && ($info['verguetungQuelle'] ?? 'platzhalter') !== 'platzhalter') {
+            return (float) ($info['verguetungCt'] ?? 0.0);
+        }
+        return $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
+    }
+
+    /** Inbetriebnahme als ISO-Datum (JJJJ-MM-TT), leer wenn unbekannt. */
+    private function getInbetriebnahmeIso(): string
+    {
+        $info = $this->getPlantInfo();
+        if ($info !== null && ($info['inbetriebnahme'] ?? '') !== '') {
+            return (string) $info['inbetriebnahme'];
+        }
+        return $this->parseAnlageDatum($this->ReadPropertyString('InbetriebnahmeDatum')) ?? '';
+    }
+
+    /** Förderende als ISO-Datum — NUR über EMS ermittelbar (keine eigene Berechnung hier). */
+    private function getFoerderendeIso(): ?string
+    {
+        $info = $this->getPlantInfo();
+        return ($info['foerderende'] ?? '') !== '' ? (string) $info['foerderende'] : null;
+    }
+
+    /** EEG-Fassung der Inbetriebnahme — NUR über EMS ermittelbar. */
+    private function getEegFassung(): ?string
+    {
+        $info = $this->getPlantInfo();
+        return $info['eegFassung'] ?? null;
+    }
+
+    /** Rechtspflichten der Anlage (code+text) — NUR über EMS ermittelbar, sonst leer. */
+    private function getPflichten(): array
+    {
+        $info = $this->getPlantInfo();
+        return $info['pflichten'] ?? [];
+    }
+
+    /**
+     * Akzeptiert Anlagen-Datumseingaben in BEIDEN Formaten (Verbund-Regel 9b:
+     * nutzersichtbar TT.MM.JJJJ, altes JJJJ-MM-TT wird weiterhin gelesen) und
+     * liefert intern immer ISO (JJJJ-MM-TT). Null bei leerer/ungültiger Eingabe.
+     */
+    private function parseAnlageDatum(string $value): ?string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+        if (preg_match('/^(\d{2})\.(\d{2})\.(\d{4})$/', $value, $m)) {
+            return "$m[3]-$m[2]-$m[1]";
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return $value;
+        }
+        return null;
+    }
+
+    /** ISO-Datum (JJJJ-MM-TT) für die Anzeige nach TT.MM.JJJJ (Verbund-Regel 9b). */
+    private function formatAnlageDatum(string $iso): string
+    {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $iso, $m)) {
+            return $iso;
+        }
+        return "$m[3].$m[2].$m[1]";
     }
 }

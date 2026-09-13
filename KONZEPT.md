@@ -79,12 +79,25 @@ im Formular als bekannte Einschränkung vermerkt.
   vs. Marktwert nach Formelabzug). Registrierung daher erst vor Phase 4 nötig, kein
   Grund, sie jetzt schon vorzuziehen.
 
-## Anlagendaten (Property, Referenz Memory `anlage-dietmar`)
+## Anlagendaten — EMS_GetPlantInfo() als führende Quelle (geändert 13.09.2026)
 
-`PvKwp` (9.18), `WrKw` (29.9), `SpeicherKwh` (40), `EinspeiseverguetungCtKwh` (18.36),
-`InbetriebnahmeDatum` (für §51a-Stichtag 25.02.2025 und 20-Jahres-Förderende relevant).
-Als Properties, weil Rechenparameter, keine Kachel-Editierliste — Punkt 11 der
-Store-Review-Checkliste greift hier nicht (kein Listen-Formular).
+Ursprünglich eigene Properties mit Dietmars Anlage als Default (`PvKwp` 9.18,
+`WrKw` 29.9, `SpeicherKwh` 40, `EinspeiseverguetungCtKwh` 18.36) — verstieß gegen
+die Verbund-Regel "keine eigene Anlage als Norm". Seit EMS 0.34.0 führt EMS diese
+Daten zentral (`EMS_GetPlantInfo()`, Vertrag `plantinfo` **1.0**, rein lesend),
+damit sie nicht dreifach (EMS/Szenariorechner/Dashboard) gepflegt werden.
+
+**Auflösung (siehe `getPlantInfo()`/`get*()`-Methoden in `module.php`):** EMS,
+sofern installiert und die Major passt, sonst eigene Property als Ersatzfeld,
+sonst 0.0/leer ("nicht angegeben") — nie mehr Dietmars Werte als Default.
+`WrKw`/`SpeicherKwh` haben KEIN EMS-Gegenstück (reine Ersatzfelder), `PvKwp`/
+`EinspeiseverguetungCtKwh`/`InbetriebnahmeDatum` werden bei vorhandenem EMS
+überschrieben. `foerderende`/`eegFassung`/`pflichten[]` gibt es NUR über EMS
+(keine eigene Nachbildung der EEG-Tabellenlogik hier) — Datenbasis für das noch
+nicht gebaute Szenario 4 (Förderende/Solarspitzengesetz), siehe dort.
+
+Datumsformat (Verbund-Regel 9b, 13.09.2026): nutzersichtbar **TT.MM.JJJJ**,
+`parseAnlageDatum()`/`formatAnlageDatum()` lesen zusätzlich das alte JJJJ-MM-TT.
 
 ## Szenario-Typen
 
@@ -164,11 +177,16 @@ siehe oben) UND historische/prognostizierte negative-Preis-Stunden
 PV-Erzeugung in diesen Stunden (`PVF_GetForecast` für Vorwärtssimulation, Archive Control
 für Rückrechnung). **Dies ist der Punkt, an dem der Netztransparenz-Zugang nötig wird** —
 vorher (Phase 1–2, ggf. 3) kommt der Rechner ohne aus.
-**Eingaben:** Inbetriebnahmedatum, aktuelle Vergütung, Bestandsschutz-Status (vor/nach
-Stichtag).
-**Automatisch gezogen:** Netztransparenz Marktwert Solar + negative Preise, eigene PV-Historie.
+**Eingaben:** keine mehr nötig für Inbetriebnahmedatum/Vergütung/Bestandsschutz — kommt
+seit 13.09.2026 aus `EMS_GetPlantInfo()` (`inbetriebnahme`, `foerderende`, `eegFassung`,
+`verguetungCt`, `pflichten[]` mit Codes wie `negativpreis`/`einspeisung60`/`ue20`, siehe
+Abschnitt "Anlagendaten" oben). Ohne EMS bleiben nur die groben Ersatzfelder, echtes
+Rechnen für dieses Szenario ohne EMS ist nicht sinnvoll möglich (Bestandsschutz-/
+Pflichten-Logik lebt bewusst nur dort, keine Nachbildung hier).
+**Automatisch gezogen:** `EMS_GetPlantInfo()` (Stammdaten/Pflichten), Netztransparenz
+Marktwert Solar + negative Preise, eigene PV-Historie.
 **Komplexität:** hoch, mehrere gekoppelte Annahmen (Abzinsung, Erzeugungsprognose über
-Jahrzehnte) — bewusst letzte Phase.
+Jahrzehnte) — bewusst letzte Phase, noch nicht gebaut.
 
 ## Ergebnis-Darstellung
 

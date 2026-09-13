@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: vier Ergebnisvariablen an der Instanz (Netztransparenz-Status, Ersparnis dynamischer Vertrag, beste Speichergrößen-Zusatzersparnis, §14a-Netto-Nutzen) — werden täglich sowie sofort nach jeder Berechnung aktualisiert."
+                    "caption": "Neu: Anlagendaten (kWp, Inbetriebnahme, Vergütung) werden übernommen, sobald EMS installiert ist — eigene Angaben sind nur noch Ersatzfeld ohne EMS, Standardwerte jetzt \"nicht angegeben\" statt einer bestimmten Anlage. Inbetriebnahmedatum jetzt TT.MM.JJJJ."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.4');"
+                    "onClick": "SZR_DismissChangelog($id, '0.5');"
                 }
             ]
         },
@@ -40,33 +40,42 @@
             "expanded": true,
             "items": [
                 {
+                    "type": "Label",
+                    "name": "PlantInfoStatusLabel",
+                    "caption": "Anlagendaten werden von EMS übernommen, sobald installiert."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Nur Ersatzfeld, solange kein EMS installiert ist oder es keine Angabe liefert (EMS führt die Anlagendaten zentral, siehe EMS_GetPlantInfo)."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "PvKwp",
-                    "caption": "PV-Leistung (kWp)",
+                    "caption": "PV-Leistung (kWp, 0 = nicht angegeben)",
                     "digits": 2
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "WrKw",
-                    "caption": "Wechselrichter-Leistung (kW)",
+                    "caption": "Wechselrichter-Leistung (kW, 0 = nicht angegeben)",
                     "digits": 1
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "SpeicherKwh",
-                    "caption": "Speichergröße (kWh)",
+                    "caption": "Speichergröße (kWh, 0 = nicht angegeben)",
                     "digits": 1
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "EinspeiseverguetungCtKwh",
-                    "caption": "Einspeisevergütung (ct/kWh)",
+                    "caption": "Einspeisevergütung (ct/kWh, 0 = nicht angegeben)",
                     "digits": 2
                 },
                 {
                     "type": "ValidationTextBox",
                     "name": "InbetriebnahmeDatum",
-                    "caption": "Inbetriebnahmedatum (JJJJ-MM-TT)"
+                    "caption": "Inbetriebnahmedatum (TT.MM.JJJJ)"
                 }
             ]
         },

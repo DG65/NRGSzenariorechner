@@ -9,9 +9,10 @@ und Phasenplan: [KONZEPT.md](KONZEPT.md).
 
 ## Grundregeln (Verbund-Standard, siehe EMS/SUITE.md)
 
-1. **Eigenständigkeit.** Jeder Fremdaufruf (`TIBBERGR_`, `PVF_`, `LFC_`, `SGW_`, `SBH_`)
-   hinter `function_exists()`/`IPS_ModuleExists()`. Fehlt ein Partner, entfällt nur das
-   jeweilige Szenario — das Modul bleibt lauffähig.
+1. **Eigenständigkeit.** Jeder Fremdaufruf (`TIBBERGR_`, `PVF_`, `LFC_`, `SGW_`, `SBH_`,
+   `EMS_`) hinter `function_exists()`/`IPS_ModuleExists()`. Fehlt ein Partner, entfällt nur
+   das jeweilige Szenario bzw. fällt auf die eigene Ersatz-Property zurück — das Modul
+   bleibt lauffähig.
 2. **Sprachregel Deutsch.** Alles Nutzersichtbare deutsch, keine vermeidbaren Anglizismen.
    Idents/Methodennamen ausgenommen.
 3. **`contractVersion` in jeder `SZR_Calculate*Scenario()`-Rückgabe**, Start `'1.0'`.
@@ -31,6 +32,12 @@ und Phasenplan: [KONZEPT.md](KONZEPT.md).
   selbst nachbilden.
 - **§14a-Live-Signal** kommt aus `SBH_GetState` (SteuerboxHub), sobald die Hardware existiert
   und das Modul Werte liefert — aktuell nur Gerüst.
+- **Anlagenstammdaten (kWp, Inbetriebnahme, Vergütung, Förderende, EEG-Fassung, Pflichten)
+  kommen aus `EMS_GetPlantInfo()`** (EMS 0.34.0+, Vertrag `plantinfo` 1.0), NICHT selbst
+  pflegen/nachbilden — das war der Zustand vor 13.09.2026 (dreifache Pflege in EMS/
+  Szenariorechner/Dashboard, eigene Anlage als Default). Eigene Properties bleiben nur
+  Ersatzfeld ohne EMS. Siehe `getPlantInfo()`/`get*()`-Methoden in `module.php` und
+  KONZEPT.md Abschnitt "Anlagendaten".
 
 ## Koordination
 
