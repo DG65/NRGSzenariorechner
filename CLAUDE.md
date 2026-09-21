@@ -36,10 +36,11 @@ und Phasenplan: [KONZEPT.md](KONZEPT.md).
   Speicherkapazität) kommen aus `EMS_GetPlantInfo()`** (EMS 0.34.0+, Vertrag `plantinfo`,
   Speicherkapazität additiv ab **1.1**), NICHT selbst pflegen/nachbilden — das war der
   Zustand vor 13.09.2026 (dreifache Pflege in EMS/Szenariorechner/Dashboard, eigene Anlage
-  als Default). Eigene Properties bleiben nur Ersatzfeld ohne EMS. **Ausnahme
-  `speicherKwhQuelle === 'einstellung'`:** EMS kann dort einen nie geänderten
-  Standardwert (10 kWh) nicht von einer bewussten Eingabe unterscheiden — in diesem Fall
-  eigene Property vorziehen, wenn gesetzt (siehe `getSpeicherKwh()`). Siehe
+  als Default). Eine bewusste eigene Eingabe (>0) überschreibt den EMS-Wert,
+  sonst ist sie nur Ersatz. **Automatische Werte nie in ein Eingabefeld schreiben** (sonst
+  speichert „Übernehmen“ sie als eigene Angabe) — stattdessen Zeile 🔗/✏️/ℹ️ und Eingabefeld
+  nur bei Bedarf sichtbar (`buildPlantFieldRows()`). `speicherKwhQuelle === 'einstellung'`
+  kann der ungeänderte EMS-Standard (10 kWh) sein und wird als „unbestätigt“ gezeigt. Siehe
   `getPlantInfo()`/`get*()`-Methoden in `module.php` und KONZEPT.md Abschnitt
   "Anlagendaten".
 

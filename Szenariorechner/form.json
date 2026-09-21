@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: Das Formular zeigt jetzt je Verbindung, ob sie steht und was gilt — Anlagendaten von EMS (Wert und Quelle je Feld, auswählbar bei mehreren EMS-Instanzen) und die Tibber-Preiskurve. Zuvor blieb der Hinweistext unverändert stehen."
+                    "caption": "Neu: Anlagenwerte, die automatisch von EMS kommen, stehen nicht mehr als 0 im Eingabefeld, sondern als Zeile mit Wert und Quelle (🔗). Eine eigene Eingabe (✏️) überschreibt den automatischen Wert; Eingabefelder erscheinen nur, wenn nichts automatisch kommt oder über den Knopf. Dazu je Verbindung eine Statuszeile (EMS, Tibber-Preiskurve)."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.6');"
+                    "onClick": "SZR_DismissChangelog($id, '0.7');"
                 }
             ]
         },
@@ -46,42 +46,81 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Die Felder unten sind nur Ersatz, solange kein EMS installiert ist oder es einen Wert nicht liefert (EMS führt die Anlagendaten zentral). Welcher Wert gerade gilt und woher er stammt, steht in der Zeile oben."
+                    "caption": "Ein Wert, der automatisch ankommt, wird hier nur angezeigt (🔗). Ein eigener Wert (✏️) überschreibt ihn. Ohne Quelle (ℹ️) erscheint das Eingabefeld."
                 },
                 {
                     "type": "SelectInstance",
                     "name": "EmsInstanceID",
                     "caption": "EMS-Instanz (leer = automatisch, wenn genau eine vorhanden ist)",
-                    "validModules": ["{31C61A7B-28C4-4F97-9651-1A64B3469E3C}"]
+                    "validModules": [
+                        "{31C61A7B-28C4-4F97-9651-1A64B3469E3C}"
+                    ],
+                    "visible": false
+                },
+                {
+                    "type": "Label",
+                    "name": "PvKwpLine",
+                    "caption": "…"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "PvKwp",
                     "caption": "PV-Leistung (kWp, 0 = nicht angegeben)",
-                    "digits": 2
+                    "digits": 2,
+                    "visible": true
+                },
+                {
+                    "type": "Label",
+                    "name": "WrKwLine",
+                    "caption": "…"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "WrKw",
                     "caption": "Wechselrichter-Leistung (kW, 0 = nicht angegeben)",
-                    "digits": 1
+                    "digits": 1,
+                    "visible": true
+                },
+                {
+                    "type": "Label",
+                    "name": "SpeicherKwhLine",
+                    "caption": "…"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "SpeicherKwh",
                     "caption": "Speichergröße (kWh, 0 = nicht angegeben)",
-                    "digits": 1
+                    "digits": 1,
+                    "visible": true
+                },
+                {
+                    "type": "Label",
+                    "name": "VerguetungLine",
+                    "caption": "…"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "EinspeiseverguetungCtKwh",
                     "caption": "Einspeisevergütung (ct/kWh, 0 = nicht angegeben)",
-                    "digits": 2
+                    "digits": 2,
+                    "visible": true
+                },
+                {
+                    "type": "Label",
+                    "name": "InbetriebnahmeLine",
+                    "caption": "…"
                 },
                 {
                     "type": "ValidationTextBox",
                     "name": "InbetriebnahmeDatum",
-                    "caption": "Inbetriebnahmedatum (TT.MM.JJJJ)"
+                    "caption": "Inbetriebnahmedatum (TT.MM.JJJJ)",
+                    "visible": true
+                },
+                {
+                    "type": "Button",
+                    "name": "ShowOwnValuesButton",
+                    "caption": "Eigene Werte stattdessen eingeben",
+                    "onClick": "SZR_ShowOwnValueFields($id);"
                 }
             ]
         },

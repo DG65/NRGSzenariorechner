@@ -126,12 +126,24 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.6']);
+        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.7']);
         $this->setFormElement($form['elements'], 'ForumHint', ['visible' => !$this->ReadAttributeBoolean('ForumHintGone')]);
         $this->setFormElement($form['elements'], 'DocVersionLabel', ['caption' => $this->buildVersionCaption()]);
         $this->setFormElement($form['elements'], 'NetztransparenzStatusLabel', ['caption' => $this->buildNetztransparenzStatusCaption()]);
         $this->setFormElement($form['elements'], 'PlantInfoStatusLabel', ['caption' => $this->buildPlantInfoStatusCaption()]);
         $this->setFormElement($form['elements'], 'TibberStatusLabel', ['caption' => $this->buildTibberStatusCaption()]);
+
+        // Je Anlagenwert: Zeile mit Wert und Quelle, Eingabefeld nur wenn nichts automatisch kommt.
+        $anyHidden = false;
+        foreach ($this->buildPlantFieldRows() as $field => $row) {
+            $this->setFormElement($form['elements'], $row['lineName'], ['caption' => $row['line']]);
+            $this->setFormElement($form['elements'], $field, ['visible' => $row['visible']]);
+            $anyHidden = $anyHidden || !$row['visible'];
+        }
+        $this->setFormElement($form['elements'], 'ShowOwnValuesButton', ['visible' => $anyHidden]);
+        $this->setFormElement($form['elements'], 'EmsInstanceID', [
+            'visible' => count($this->plantInfoConn['ids']) > 1 || $this->ReadPropertyInteger('EmsInstanceID') > 0,
+        ]);
 
         return json_encode($form);
     }
@@ -1138,78 +1150,112 @@ class Szenariorechner extends IPSModule
         return self::QUELLE_TEXT[$q] ?? $q;
     }
 
-    // Auflösung je Wert liefert [Wert, Quelle als Klartext]. get*() und die
-    // Statuszeile nutzen dieselbe Stelle, damit angezeigt wird, was tatsächlich gilt.
+    // Auflösung je Wert liefert [Wert, Quelle als Klartext, Art]. Art: 'auto' (automatisch
+    // von EMS), 'own' (bewusste eigene Eingabe, hat Vorrang), 'none' (nichts verfügbar).
+    // get*(), die Statuszeile und die Feldzeilen nutzen dieselbe Stelle, damit angezeigt
+    // wird, was tatsächlich gilt.
 
-    /** @return array{0: float, 1: string} kWp: EMS > eigene Eingabe > nicht angegeben. */
-    private function resolveKwp(): array
+    /**
+     * @param float|string $own   eigene Eingabe (0 bzw. '' = nicht angegeben)
+     * @param array|null   $ems   [Wert, Quelltext] oder null, wenn EMS nichts liefert
+     * @return array{0: float|string, 1: string, 2: string}
+     */
+    private function pickValue($own, ?array $ems): array
+    {
+        $hasOwn = is_string($own) ? $own !== '' : $own > 0.0;
+        if ($hasOwn) {
+            return [$own, 'eigene Eingabe' . ($ems !== null ? ', überschreibt ' . $ems[1] : ''), 'own'];
+        }
+        if ($ems !== null) {
+            return [$ems[0], $ems[1], 'auto'];
+        }
+        return [$own, 'nicht angegeben', 'none'];
+    }
+
+    private function emsKwp(): ?array
     {
         $info = $this->getPlantInfo();
         if ($info !== null && ($info['kwp'] ?? 0.0) > 0.0) {
             return [(float) $info['kwp'], 'EMS: ' . $this->quelleText((string) ($info['kwpQuelle'] ?? ''))];
         }
-        $own = $this->ReadPropertyFloat('PvKwp');
-        return [$own, $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben'];
+        return null;
     }
 
     /**
-     * Speicherkapazität (kWh) — Referenzpunkt für das Speichergrößen-Szenario.
-     * EMS liefert seit 0.34.2 (plantinfo 1.1) `speicherKwh`/`speicherKwhQuelle`:
-     * 'wechselrichter' (über InverterHub gemessen, `bat_capacity`) ist
-     * vertrauenswürdig und hat Vorrang. 'einstellung' (EMS-Property
-     * BAT_Capacity_kWh) kann laut EMS der nie geänderte Standardwert 10 kWh
-     * sein — EMS kann eine bewusste Eingabe nicht von diesem Default
-     * unterscheiden. Deshalb bei 'einstellung' die EIGENE Eingabe vorziehen,
-     * wenn sie gesetzt ist; ist auch sie 0, ist der EMS-Wert immer noch besser
-     * als gar keiner. 'fehlt' (0) fällt auf die eigene Eingabe zurück.
-     *
-     * @return array{0: float, 1: string}
+     * Speicherkapazität aus EMS (plantinfo 1.1, `speicherKwh`/`speicherKwhQuelle`):
+     * 'wechselrichter' (über InverterHub gemessen) ist belastbar. 'einstellung'
+     * (EMS-Property BAT_Capacity_kWh) kann laut EMS der nie geänderte Standardwert
+     * 10 kWh sein — EMS kann eine bewusste Eingabe nicht davon unterscheiden — und
+     * wird deshalb als "unbestätigt" gekennzeichnet.
      */
-    private function resolveSpeicherKwh(): array
+    private function emsSpeicherKwh(): ?array
     {
         $info = $this->getPlantInfo();
-        $own = $this->ReadPropertyFloat('SpeicherKwh');
-        $ownQ = $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben';
-        if ($info === null) {
-            return [$own, $ownQ];
+        $ems = (float) ($info['speicherKwh'] ?? 0.0);
+        if ($info === null || $ems <= 0.0) {
+            return null;
         }
         $quelle = (string) ($info['speicherKwhQuelle'] ?? 'fehlt');
-        $ems = (float) ($info['speicherKwh'] ?? 0.0);
-        if ($quelle === 'wechselrichter' && $ems > 0.0) {
+        if ($quelle === 'wechselrichter') {
             return [$ems, 'EMS: ' . $this->quelleText($quelle)];
         }
-        if ($quelle === 'einstellung' && $ems > 0.0) {
-            return $own > 0.0
-                ? [$own, 'eigene Eingabe, EMS-Einstellung nicht übernommen']
-                : [$ems, 'EMS: ' . $this->quelleText($quelle) . ', unbestätigt'];
+        if ($quelle === 'einstellung') {
+            return [$ems, 'EMS: ' . $this->quelleText($quelle) . ', unbestätigt'];
         }
-        return [$own, $ownQ];
+        return null;
     }
 
-    /** @return array{0: float, 1: string} Einspeisevergütung (ct/kWh): EMS > eigene Eingabe. */
-    private function resolveVerguetungCt(): array
+    private function emsVerguetungCt(): ?array
     {
         $info = $this->getPlantInfo();
-        if ($info !== null && ($info['verguetungQuelle'] ?? 'platzhalter') !== 'platzhalter') {
-            $q = 'EMS: ' . $this->quelleText((string) $info['verguetungQuelle']);
-            if (($info['verguetungQuelle'] ?? '') === 'berechnet' && !empty($info['verguetungGeprueft'])) {
-                $q .= ', geprüft';
-            }
-            return [(float) ($info['verguetungCt'] ?? 0.0), $q];
+        if ($info === null || ($info['verguetungQuelle'] ?? 'platzhalter') === 'platzhalter') {
+            return null;
         }
-        $own = $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
-        return [$own, $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben'];
+        $q = 'EMS: ' . $this->quelleText((string) $info['verguetungQuelle']);
+        if (($info['verguetungQuelle'] ?? '') === 'berechnet' && !empty($info['verguetungGeprueft'])) {
+            $q .= ', geprüft';
+        }
+        return [(float) ($info['verguetungCt'] ?? 0.0), $q];
     }
 
-    /** @return array{0: string, 1: string} Inbetriebnahme als ISO-Datum (leer = unbekannt). */
-    private function resolveInbetriebnahme(): array
+    private function emsInbetriebnahme(): ?array
     {
         $info = $this->getPlantInfo();
         if ($info !== null && ($info['inbetriebnahme'] ?? '') !== '') {
             return [(string) $info['inbetriebnahme'], 'EMS'];
         }
+        return null;
+    }
+
+    /** @return array{0: float, 1: string, 2: string} */
+    private function resolveKwp(): array
+    {
+        return $this->pickValue($this->ReadPropertyFloat('PvKwp'), $this->emsKwp());
+    }
+
+    /** @return array{0: float, 1: string, 2: string} */
+    private function resolveSpeicherKwh(): array
+    {
+        return $this->pickValue($this->ReadPropertyFloat('SpeicherKwh'), $this->emsSpeicherKwh());
+    }
+
+    /** @return array{0: float, 1: string, 2: string} */
+    private function resolveVerguetungCt(): array
+    {
+        return $this->pickValue($this->ReadPropertyFloat('EinspeiseverguetungCtKwh'), $this->emsVerguetungCt());
+    }
+
+    /** @return array{0: string, 1: string, 2: string} Inbetriebnahme als ISO-Datum. */
+    private function resolveInbetriebnahme(): array
+    {
         $own = $this->parseAnlageDatum($this->ReadPropertyString('InbetriebnahmeDatum')) ?? '';
-        return [$own, $own !== '' ? 'eigene Eingabe' : 'nicht angegeben'];
+        return $this->pickValue($own, $this->emsInbetriebnahme());
+    }
+
+    /** @return array{0: float, 1: string, 2: string} Wechselrichter-Leistung: keine Quelle im Verbund. */
+    private function resolveWrKw(): array
+    {
+        return $this->pickValue($this->ReadPropertyFloat('WrKw'), null);
     }
 
     private function getKwp(): float
@@ -1251,6 +1297,68 @@ class Szenariorechner extends IPSModule
     {
         $info = $this->getPlantInfo();
         return $info['pflichten'] ?? [];
+    }
+
+    private const EIGENE_FELDER = ['PvKwp', 'WrKw', 'SpeicherKwh', 'EinspeiseverguetungCtKwh', 'InbetriebnahmeDatum'];
+
+    /**
+     * Schreibgeschützte Zeile je Feld (Verbund-Konvention "Wert kommt automatisch:
+     * Eingabefeld ersetzen"): 🔗 automatisch übernommen, ✏️ eigene Eingabe, ℹ️ nichts
+     * verfügbar. Zusätzlich, ob das Eingabefeld sichtbar sein soll: nur wenn nichts
+     * automatisch kommt oder eine eigene Eingabe gilt. Der Wert wird NIE in das
+     * Eingabefeld geschrieben — sonst würde ein Klick auf "Übernehmen" ihn als eigene
+     * Angabe speichern und das Modul folgte EMS nicht mehr.
+     *
+     * @return array<string, array{line: string, lineName: string, visible: bool}> je Eingabefeld
+     */
+    private function buildPlantFieldRows(): array
+    {
+        $this->getPlantInfo();
+        $rows = [];
+        $add = function (string $field, string $lineName, string $label, array $res, string $shown, string $noneHint) use (&$rows) {
+            [, $text, $kind] = $res;
+            switch ($kind) {
+                case 'auto':
+                    $src = trim((string) preg_replace('/^EMS:?\s*/', '', $text));
+                    $line = "🔗 $label: $shown (automatisch von EMS" . ($src !== '' ? ", $src" : '') . ')';
+                    break;
+                case 'own':
+                    $line = "✏️ $label: $shown ($text)";
+                    break;
+                default:
+                    $line = "ℹ️ $label: nicht angegeben — $noneHint";
+            }
+            $rows[$field] = ['line' => $line, 'lineName' => $lineName, 'visible' => $kind !== 'auto'];
+        };
+
+        $r = $this->resolveKwp();
+        $add('PvKwp', 'PvKwpLine', 'PV-Leistung', $r, $this->fmtZahl((float) $r[0]) . ' kWp',
+            'derzeit von keinem Szenario gebraucht, Eintragen ist optional');
+        $r = $this->resolveWrKw();
+        $add('WrKw', 'WrKwLine', 'Wechselrichter-Leistung', $r, $this->fmtZahl((float) $r[0], 1) . ' kW',
+            'im Verbund liefert keine Quelle diesen Wert, derzeit von keinem Szenario gebraucht, Eintragen ist optional');
+        $r = $this->resolveSpeicherKwh();
+        $add('SpeicherKwh', 'SpeicherKwhLine', 'Speichergröße', $r, $this->fmtZahl((float) $r[0], 1) . ' kWh',
+            'wird vom Szenario „Speichergröße“ als Ausgangspunkt gebraucht, bitte unten eintragen');
+        $r = $this->resolveVerguetungCt();
+        $add('EinspeiseverguetungCtKwh', 'VerguetungLine', 'Einspeisevergütung', $r, $this->fmtZahl((float) $r[0]) . ' ct/kWh',
+            'wird vom Szenario „Speichergröße“ gebraucht, bitte unten eintragen');
+        $r = $this->resolveInbetriebnahme();
+        $add('InbetriebnahmeDatum', 'InbetriebnahmeLine', 'Inbetriebnahme', $r, $r[0] !== '' ? $this->formatAnlageDatum((string) $r[0]) : '',
+            'derzeit von keinem Szenario gebraucht, Eintragen ist optional');
+        return $rows;
+    }
+
+    /**
+     * Knopf "Eigene Werte eingeben": blendet die verborgenen Eingabefelder nur im
+     * geöffneten Formular ein (UpdateFormField), speichert nichts.
+     */
+    public function ShowOwnValueFields(): void
+    {
+        foreach (self::EIGENE_FELDER as $f) {
+            $this->UpdateFormField($f, 'visible', true);
+        }
+        $this->UpdateFormField('ShowOwnValuesButton', 'visible', false);
     }
 
     private function fmtZahl(float $v, int $dec = 2): string

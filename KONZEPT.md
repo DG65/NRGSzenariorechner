@@ -98,16 +98,25 @@ vorhandenem EMS überschrieben. `foerderende`/`eegFassung`/`pflichten[]` gibt es
 NUR über EMS (keine eigene Nachbildung der EEG-Tabellenlogik hier) — Datenbasis
 für das noch nicht gebaute Szenario 4 (Förderende/Solarspitzengesetz), siehe dort.
 
-**`SpeicherKwh` seit EMS 0.34.2 (`plantinfo` **1.1**, additiv) ebenfalls über
-EMS auflösbar** (`speicherKwh`/`speicherKwhQuelle`): `wechselrichter` (über
-InverterHub gemessen, `bat_capacity`) hat Vorrang, weil belastbar gemessen.
-`einstellung` (EMS-Property `BAT_Capacity_kWh`) wird NICHT blind übernommen —
-das kann laut EMS der nie geänderte Standardwert 10 kWh sein, EMS kann eine
-bewusste Eingabe nicht davon unterscheiden. `getSpeicherKwh()` zieht deshalb bei
-`einstellung` die eigene Property vor, wenn sie gesetzt ist (>0, seit der
-"keine eigene Anlage als Norm"-Umstellung kein unbeabsichtigter Default mehr),
-sonst den EMS-`einstellung`-Wert als Notlösung. Bei `fehlt` (0) wie gehabt die
-eigene Property.
+**Rangfolge und Anzeige (seit 0.7.0):** Eine bewusste eigene Eingabe (>0) schlägt den
+EMS-Wert, sonst gilt der EMS-Wert, sonst „nicht angegeben“. Das Formular zeigt je Feld
+eine schreibgeschützte Zeile — 🔗 automatisch von EMS (mit Quelle), ✏️ eigene Eingabe
+(„überschreibt EMS: …“), ℹ️ nichts verfügbar — und das Eingabefeld nur, wenn nichts
+automatisch kommt oder eine eigene Eingabe gilt; ein Knopf blendet die übrigen im
+geöffneten Formular ein (`UpdateFormField`, speichert nichts). Der automatische Wert wird
+NIE in das Eingabefeld geschrieben: „Übernehmen“ würde ihn sonst als eigene Angabe
+speichern, das Modul folgte EMS nicht mehr und „0 = nicht angegeben“ verlöre seine
+Bedeutung.
+
+**`SpeicherKwh` seit EMS 0.34.2 (`plantinfo` **1.1**, additiv) ebenfalls über EMS**
+(`speicherKwh`/`speicherKwhQuelle`): `wechselrichter` (über InverterHub gemessen,
+`bat_capacity`) ist belastbar. `einstellung` (EMS-Property `BAT_Capacity_kWh`) kann laut
+EMS der nie geänderte Standardwert 10 kWh sein und wird deshalb als „unbestätigt“
+gekennzeichnet; eine eigene Eingabe schlägt sie ohnehin.
+
+Wer welchen Wert braucht: `SpeicherKwh` und Einspeisevergütung das Szenario
+„Speichergröße“; `PvKwp`, `WrKw`, Inbetriebnahme derzeit kein Szenario (vorgesehen für
+Förderende/Solarspitzengesetz) — die ℹ️-Zeile sagt das ehrlich statt „wird gebraucht“.
 
 Datumsformat (Verbund-Regel 9b, 13.09.2026): nutzersichtbar **TT.MM.JJJJ**,
 `parseAnlageDatum()`/`formatAnlageDatum()` lesen zusätzlich das alte JJJJ-MM-TT.

@@ -15,7 +15,7 @@ $scenario = $argv[1] ?? null;
 
 if ($scenario === null) {
     $fails = 0;
-    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'tibber_ok', 'tibber_leer', 'tibber_keins'] as $sc) {
+    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'tibber_ok', 'tibber_leer', 'tibber_keins'] as $sc) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . $sc, $rc);
         $fails += $rc === 0 ? 0 : 1;
     }
@@ -37,7 +37,7 @@ class IPSModule
     public function ReadAttributeBoolean($n) { return false; }
     public function ReadAttributeInteger($n) { return 0; }
 }
-function IPS_GetLibrary($g) { return ['Version' => '0.6.0-beta.1', 'Build' => 14]; }
+function IPS_GetLibrary($g) { return ['Version' => '0.7.0-beta.1', 'Build' => 15]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
@@ -57,6 +57,8 @@ switch ($scenario) {
     case 'ems_keins': break;
     case 'ems_mehrere': $emsIds = [55472, 55473]; break;
     case 'ems_vertrag': $emsIds = [55472]; $plant['contractVersion'] = '2.0'; break;
+    case 'ems_eigen': $emsIds = [55472]; $props['PvKwp'] = 10.0; break;
+    case 'ems_einstellung': $emsIds = [55472]; $plant['speicherKwhQuelle'] = 'einstellung'; $plant['speicherKwh'] = 10.0; break;
     case 'tibber_ok': $tibberIds = [60001]; break;
     case 'tibber_leer': $tibberIds = [60001]; $tibberSlots = []; break;
     case 'tibber_keins': break;
@@ -110,7 +112,7 @@ $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
 $check(!str_contains($tibLine, 'wird geprüft'), "Tibber: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.6.0'), "Versionszeile nicht ersetzt: $verLine");
+$check(str_contains($verLine, 'Version 0.7.0'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':
@@ -139,6 +141,50 @@ switch ($scenario) {
         break;
     case 'tibber_keins':
         $check(str_starts_with($tibLine, 'ℹ️'), "erwartet ℹ️ Tibber: $tibLine");
+        break;
+}
+
+
+// ---- Eingabefelder: Zeile + Sichtbarkeit je Zustand -----------------------------
+$lineOf = fn(string $n) => findEl($el, $n)['caption'] ?? '';
+$visOf = fn(string $n) => findEl($el, $n)['visible'] ?? null;
+$inputs = ['PvKwp' => 'PvKwpLine', 'WrKw' => 'WrKwLine', 'SpeicherKwh' => 'SpeicherKwhLine', 'EinspeiseverguetungCtKwh' => 'VerguetungLine', 'InbetriebnahmeDatum' => 'InbetriebnahmeLine'];
+foreach ($inputs as $in => $ln) {
+    $check(findEl($el, $in) !== null && findEl($el, $ln) !== null, "$in/$ln fehlt im Formular");
+    $check(!str_contains($lineOf($ln), '…'), "$ln: Platzhalter steht noch");
+    // Der automatische Wert darf nie ins Eingabefeld geschrieben werden (sonst würde "Übernehmen" ihn speichern).
+    $check(!array_key_exists('value', findEl($el, $in) ?? []), "$in: enthält 'value' - automatischer Wert im Eingabefeld");
+}
+$mehrere = $scenario === 'ems_mehrere';
+$check($visOf('EmsInstanceID') === $mehrere, 'EmsInstanceID sichtbar=' . var_export($visOf('EmsInstanceID'), true) . ' (erwartet ' . var_export($mehrere, true) . ')');
+
+switch ($scenario) {
+    case 'ems_ok':
+        $check($lineOf('PvKwpLine') === '🔗 PV-Leistung: 9,18 kWp (automatisch von EMS, PV-Prognose)', 'PvKwpLine: ' . $lineOf('PvKwpLine'));
+        $check(str_starts_with($lineOf('SpeicherKwhLine'), '🔗') && str_contains($lineOf('SpeicherKwhLine'), '40 kWh'), 'SpeicherKwhLine: ' . $lineOf('SpeicherKwhLine'));
+        $check(str_contains($lineOf('InbetriebnahmeLine'), '24.10.2012'), 'InbetriebnahmeLine: ' . $lineOf('InbetriebnahmeLine'));
+        foreach (['PvKwp', 'SpeicherKwh', 'EinspeiseverguetungCtKwh', 'InbetriebnahmeDatum'] as $in) {
+            $check($visOf($in) === false, "$in muss verborgen sein");
+        }
+        $check($visOf('WrKw') === true && str_starts_with($lineOf('WrKwLine'), 'ℹ️'), 'WrKw (keine Quelle im Verbund) muss sichtbar sein mit ℹ️: ' . $lineOf('WrKwLine'));
+        $check($visOf('ShowOwnValuesButton') === true, 'Knopf "Eigene Werte" muss sichtbar sein');
+        break;
+    case 'ems_fehlt':
+        $check($visOf('PvKwp') === true && str_starts_with($lineOf('PvKwpLine'), 'ℹ️'), 'kWp fehlt: Feld sichtbar mit ℹ️: ' . $lineOf('PvKwpLine'));
+        $check($visOf('SpeicherKwh') === false, 'Speicher kommt automatisch: Feld verborgen');
+        break;
+    case 'ems_keins':
+        foreach ($inputs as $in => $ln) {
+            $check($visOf($in) === true && str_starts_with($lineOf($ln), 'ℹ️'), "$in ohne EMS: Feld sichtbar mit ℹ️: " . $lineOf($ln));
+        }
+        $check($visOf('ShowOwnValuesButton') === false, 'ohne EMS ist nichts verborgen, Knopf muss weg sein');
+        break;
+    case 'ems_eigen':
+        $check($visOf('PvKwp') === true && str_starts_with($lineOf('PvKwpLine'), '✏️') && str_contains($lineOf('PvKwpLine'), 'überschreibt'), 'eigene Eingabe: ✏️, überschreibt EMS, Feld sichtbar: ' . $lineOf('PvKwpLine'));
+        $check($visOf('SpeicherKwh') === false, 'Speicher weiter automatisch: Feld verborgen');
+        break;
+    case 'ems_einstellung':
+        $check(str_contains($lineOf('SpeicherKwhLine'), 'unbestätigt'), 'EMS-Einstellung muss als unbestätigt erkennbar sein: ' . $lineOf('SpeicherKwhLine'));
         break;
 }
 
