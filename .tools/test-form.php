@@ -15,7 +15,7 @@ $scenario = $argv[1] ?? null;
 
 if ($scenario === null) {
     $fails = 0;
-    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'preis_ok', 'preis_fest', 'preis_keins', 'quelle_ok', 'quelle_mehrere', 'quelle_keins'] as $sc) {
+    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'preis_ok', 'preis_fest', 'preis_keins', 'quelle_ok', 'quelle_mehrere', 'quelle_keins', 'haus_vorzeichen'] as $sc) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . $sc, $rc);
         $fails += $rc === 0 ? 0 : 1;
     }
@@ -41,7 +41,7 @@ class IPSModule
     public function WriteAttributeString($n, $v) {}
 }
 const KL_WARNING = 103;
-function IPS_GetLibrary($g) { return ['Version' => '0.9.0-beta.1', 'Build' => 18]; }
+function IPS_GetLibrary($g) { return ['Version' => '0.9.1-beta.1', 'Build' => 19]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
@@ -49,6 +49,8 @@ $emsIds = [];
 $tibberIds = [];
 $meterIds = [];
 $ihubIds = [];
+$houseCounter = true;
+$houseVals = 400.0;
 $tarif = 'tibber';
 $plant = [
     'contractVersion' => '1.1', 'inbetriebnahme' => '2012-10-24', 'kwp' => 9.18, 'kwpQuelle' => 'prognose',
@@ -72,6 +74,7 @@ switch ($scenario) {
     case 'quelle_ok': $meterIds = [10]; $ihubIds = [20]; break;
     case 'quelle_mehrere': $meterIds = [10, 11]; $ihubIds = [20, 21]; break;
     case 'quelle_keins': break;
+    case 'haus_vorzeichen': $meterIds = [10]; $houseCounter = false; $houseVals = -400.0; break;
 }
 if ($scenario !== 'ems_keins') {
     // EMS-Funktion existiert in allen Szenarien außer "kein EMS installiert".
@@ -88,8 +91,22 @@ function IPS_GetInstanceListByModuleID($g)
     return str_contains($g, '31C61A7B') ? $GLOBALS['emsIds'] : $GLOBALS['tibberIds'];
 }
 function IPS_ModuleExists($g) { return true; }
+function IPS_VariableExists($id) { return true; }
 function AC_GetLoggingStatus($a, $v) { return true; }
-function MHUB_GetFunctions(int $id) { return json_encode(['contractVersion' => '1.3', 'assignments' => [['function' => 'grid', 'energyImportID' => 500 + $id, 'energyKind' => 'counter', 'energyMeasured' => true, 'authority' => 'billing']]]); }
+function MHUB_GetFunctions(int $id)
+{
+    $house = $GLOBALS['houseCounter']
+        ? ['function' => 'house', 'energyImportID' => 800 + $id, 'energyKind' => 'counter', 'energyMeasured' => true, 'powerID' => 850 + $id, 'authority' => 'billing']
+        : ['function' => 'house', 'energyImportID' => 0, 'powerID' => 850 + $id, 'authority' => 'billing'];
+    return json_encode(['contractVersion' => '1.3', 'assignments' => [
+        ['function' => 'grid', 'energyImportID' => 500 + $id, 'energyKind' => 'counter', 'energyMeasured' => true, 'authority' => 'billing'], $house]]);
+}
+function AC_GetAggregatedValues($a, $var, $lvl, $from, $to, $lim)
+{
+    $rows = [];
+    for ($t = $from; $t < $to; $t += 3600) { $rows[] = ['TimeStamp' => $t, 'Avg' => $GLOBALS['houseVals']]; }
+    return $rows;
+}
 function IHUB_GetFunctions(int $id): array { return ['contractVersion' => '1.3', 'pvPowerID' => 700 + $id]; }
 
 require dirname(__DIR__) . '/Szenariorechner/module.php';
@@ -129,7 +146,7 @@ $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
 $check(!str_contains($tibLine, 'wird geprüft'), "Preisquelle: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.9.0'), "Versionszeile nicht ersetzt: $verLine");
+$check(str_contains($verLine, 'Version 0.9.1'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':
@@ -189,12 +206,15 @@ switch ($scenario) {
         $check(str_starts_with($lineOf('NetzbezugLine'), '🔗') && $colOf('NetzbezugLine') === 0x2E8B3D && $visOf('NetzbezugVarID') === false, 'Netzbezug automatisch: 🔗, grün, Eingabefeld verborgen: ' . $lineOf('NetzbezugLine'));
         $check(str_contains($lineOf('NetzbezugLine'), 'MeterHub #10') && str_contains($lineOf('NetzbezugLine'), 'Abrechnungszähler'), 'Netzbezug nennt Instanz und Zählerart');
         $check(str_starts_with($lineOf('PvErzeugungLine'), '🔗') && $visOf('PvErzeugungVarID') === false, 'PV automatisch: 🔗, Eingabefeld verborgen: ' . $lineOf('PvErzeugungLine'));
-        $check(str_starts_with($lineOf('HausLastLine'), 'ℹ️') && $visOf('HausLastVarID') === true && str_contains($lineOf('HausLastLine'), 'nicht automatisch'), 'Hauslast: ehrlich ℹ️ nicht automatisch, Feld sichtbar: ' . $lineOf('HausLastLine'));
+        $check(str_starts_with($lineOf('HausLastLine'), '🔗') && $visOf('HausLastVarID') === false && str_contains($lineOf('HausLastLine'), 'Hausverbrauch'), 'Hauslast automatisch (Zählerstand): 🔗, Feld verborgen: ' . $lineOf('HausLastLine'));
         $check($visOf('ShowOwnValuesButton') === true, 'Knopf für eigene Werte sichtbar, solange etwas verborgen ist');
         break;
     case 'quelle_mehrere':
         $check(str_starts_with($lineOf('NetzbezugLine'), '⚠️') && $visOf('NetzbezugVarID') === true, 'Netzbezug mehrere: ⚠️ und Feld sichtbar: ' . $lineOf('NetzbezugLine'));
         $check(str_starts_with($lineOf('PvErzeugungLine'), '⚠️') && $visOf('PvErzeugungVarID') === true, 'PV mehrere: ⚠️ und Feld sichtbar: ' . $lineOf('PvErzeugungLine'));
+        break;
+    case 'haus_vorzeichen':
+        $check(str_starts_with($lineOf('HausLastLine'), '⚠️') && str_contains($lineOf('HausLastLine'), 'dauerhaft negativ') && $visOf('HausLastVarID') === true && str_contains($lineOf('HausLastLine'), 'nicht umgedreht'), 'Hauslast dauerhaft negativ: ⚠️, Konfigurationsfehler, nicht umgedreht, Feld sichtbar: ' . $lineOf('HausLastLine'));
         break;
     case 'quelle_keins':
         $check(str_starts_with($lineOf('NetzbezugLine'), 'ℹ️') && $visOf('NetzbezugVarID') === true, 'Netzbezug ohne MeterHub: ℹ️, Feld sichtbar');

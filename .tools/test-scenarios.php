@@ -194,8 +194,29 @@ $GLOBALS['emsIds'] = [];
 $av = $m->GetAvailableScenarios()[1];
 $r = $m->CalculateStorageSizeScenario(2);
 check($av['available'] === true && count($r['sizes']) > 0, 'Erkennung: PV-Leistung aus InverterHub, Speicher-Szenario rechnet mit manueller Hauslast', json_encode($av));
-$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]]]);
-check($m->GetAvailableScenarios()[1]['available'] === false && str_contains($m->GetAvailableScenarios()[1]['reason'], 'Hauslast'), 'Erkennung: Hauslast wird NICHT automatisch übernommen, Grund genannt');
+// I6b: Hauslast aus MeterHub `house` (Zählerstand, vorzeichenfrei)
+$houseKwh = fn($t) => ((int) date('G', $t) === 20) ? 12.0 : 0.0;   // Zähler: kWh je Stunde
+$houseAssign = fn(int $vid, array $more = []) => ['contractVersion' => '1.3', 'assignments' => [array_merge(['function' => 'house', 'energyImportID' => $vid, 'energyKind' => 'counter', 'energyMeasured' => true, 'authority' => 'billing', 'powerID' => 0], $more)]];
+$m = fresh(['FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0, 'SpeicherKwh' => 10.0],
+    ['series' => [700 => $pvW, 800 => $houseKwh], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]], 'meterIds' => [12], 'mhub' => [12 => $houseAssign(800)]]);
+$GLOBALS['emsIds'] = [];
+$r = $m->CalculateStorageSizeScenario(2);
+$row20 = null; foreach ($r['sizes'] as $x) { if ($x['storageKwh'] === 20.0) { $row20 = $x; } }
+check($m->GetAvailableScenarios()[1]['available'] === true && $row20 !== null && abs($row20['additionalSavingsEurPerYear'] - 160.60) < 0.05, 'Hauslast: Zählerstand aus MeterHub house wird ohne Eingabe übernommen und rechnet richtig', json_encode($row20));
+// I6c: Hauslast als Leistung: Vorzeichenprüfung
+$pos = fn($t) => 400.0; $neg = fn($t) => -400.0; $zero = fn($t) => 0.0;
+$mixed = fn($t) => (intdiv($t, 3600) % 3 === 0) ? -300.0 : 500.0;   // 33 % negativ
+foreach ([['positiv', $pos, true], ['dauerhaft negativ', $neg, false], ['Median 0', $zero, false], ['über 20 % negativ', $mixed, false]] as [$name, $fnv, $expect]) {
+    $m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW, 850 + 12 => $fnv], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]],
+        'meterIds' => [12], 'mhub' => [12 => $houseAssign(0, ['energyImportID' => 0])]]);
+    $GLOBALS['mhub'][12]['assignments'][0]['powerID'] = 862;
+    $av = $m->GetAvailableScenarios()[1];
+    check($av['available'] === $expect, "Hauslast Leistung: Vorzeichen $name → " . ($expect ? 'verwendet' : 'nicht verwendet und nicht umgedreht'), json_encode($av));
+}
+// I6d: Hauslast: hochgerechneter Zähler wird ignoriert, Leistung wird stattdessen geprüft
+$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW, 800 => $houseKwh, 862 => $pos], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]],
+    'meterIds' => [12], 'mhub' => [12 => $houseAssign(800, ['energyMeasured' => false, 'powerID' => 862])]]);
+check($m->GetAvailableScenarios()[1]['available'] === true, 'Hauslast: hochgerechneter Zähler wird nicht genommen, die Leistung übernimmt (nach Vorzeichenprüfung)');
 // I7: mehrere Wechselrichter → keine Summe raten
 $m = fresh(['HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW, 701 => $pvW, 201 => $ld], 'ihubIds' => [20, 21],
     'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700], 21 => ['contractVersion' => '1.3', 'pvPowerID' => 701]]]);

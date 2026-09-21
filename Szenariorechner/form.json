@@ -29,7 +29,7 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: Netzbezug (MeterHub, Abrechnungszähler bevorzugt) und PV-Erzeugung (InverterHub) werden automatisch erkannt und als Zeile mit Quelle gezeigt (🔗 grün); das Eingabefeld erscheint nur, wenn nichts eindeutig gefunden wird. Bei mehreren gleichrangigen Quellen oder nicht archivierten Variablen meldet das Formular das (⚠️), statt zu raten. Die Hauslast bleibt vorerst manuell."
+                    "caption": "Neu: Netzbezug und Hauslast (MeterHub, Abrechnungszähler bevorzugt) sowie PV-Erzeugung (InverterHub) werden automatisch erkannt und als Zeile mit Quelle gezeigt (🔗 grün); das Eingabefeld erscheint nur, wenn nichts eindeutig gefunden wird. Bei mehreren gleichrangigen Quellen, nicht archivierten Variablen oder einem unklaren Vorzeichen der Hauslast meldet das Formular das (⚠️), statt zu raten oder still umzudrehen."
                 },
                 {
                     "type": "Button",

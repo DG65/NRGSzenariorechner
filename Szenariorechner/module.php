@@ -725,7 +725,8 @@ class Szenariorechner extends IPSModule
         $result['periodTo'] = $end;
 
         $pv = $this->hourlyKwhSeries($this->resolvePv()[0], false, $start, $end);
-        $load = $this->hourlyKwhSeries($this->resolveLast()[0], false, $start, $end);
+        [$lastVar, , , $lastIsCounter] = $this->resolveLast();
+        $load = $this->hourlyKwhSeries($lastVar, $lastIsCounter, $start, $end);
         if ($pv === null || $load === null) {
             $result['reason'] = 'PV-Erzeugungs- oder Hauslastvariable ist ungültig oder nicht archiviert';
             return $result;
@@ -1211,9 +1212,9 @@ class Szenariorechner extends IPSModule
     // SUITE.md: ein Feature, das Daten eines Partnermoduls braucht, prüft ZUERST die vorhandene
     // Discovery; das manuelle Feld ist nur Ersatz. Netzbezug kommt aus MeterHub (Funktion
     // `grid`, kumulativer Zähler `energyImportID` = Bezug, Abrechnungszähler `authority=billing`
-    // vor `auxiliary`), die PV-Erzeugung aus InverterHub (`pvPowerID`, W). Die Hauslast wird
-    // NICHT automatisch übernommen: das Vorzeichen der MeterHub-Funktion `house` ist im Vertrag
-    // nicht verbindlich festgelegt (Stand 21.09.2026, EMS fragt bei MeterHub nach).
+    // vor `auxiliary`), die PV-Erzeugung aus InverterHub (`pvPowerID`, W). Die Hauslast kommt aus
+    // MeterHub `house` (+ = Verbrauch, verbindlich, MeterHub-Sitzung 21.09.2026); bei einer Leistungs-
+    // variable wird das Vorzeichen geprüft, ein falsch gestellter Zähler nie still umgedreht.
     // Nicht raten: mehrere gleichrangige Kandidaten oder eine nicht archivierte Variable werden
     // als ⚠️ gemeldet und NICHT verwendet.
 
@@ -1244,6 +1245,36 @@ class Szenariorechner extends IPSModule
     }
 
     /**
+     * Alle Zuordnungen einer Funktion (`grid`, `house`, …) über MeterHub UND MeterHubVirtual.
+     * Je Treffer ['inst', 'assign' (Zuordnung), 'auth' (billing|auxiliary)].
+     */
+    private function meterHubAssignments(string $function): array
+    {
+        $out = [];
+        foreach ([[self::METERHUB_GUID, 'MHUB_GetFunctions'], [self::METERHUB_VIRTUAL_GUID, 'MHUBV_GetFunctions']] as [$guid, $fn]) {
+            if (!function_exists($fn)) {
+                continue;
+            }
+            foreach ((@IPS_GetInstanceListByModuleID($guid) ?: []) as $iid) {
+                $r = $this->readPartnerContract(fn() => $fn($iid), "$fn #$iid");
+                foreach ((array) ($r['assignments'] ?? []) as $a) {
+                    if (is_array($a) && ($a['function'] ?? '') === $function) {
+                        $out[] = ['inst' => (int) $iid, 'assign' => $a, 'auth' => (string) ($a['authority'] ?? $r['authority'] ?? 'auxiliary')];
+                    }
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** Name und Zählerart als Quelltext, z. B. "MeterHub #12 „Zähler“, Netzanschluss, Abrechnungszähler". */
+    private function meterHubText(int $inst, string $what, string $auth): string
+    {
+        $name = @IPS_GetName($inst);
+        return 'MeterHub #' . $inst . ($name ? " „{$name}“" : '') . ', ' . $what . ', ' . ($auth === 'billing' ? 'Abrechnungszähler' : 'Hilfszähler');
+    }
+
+    /**
      * Netzbezug-Zähler aus MeterHub. state: ok|none|multiple|unarchived. Bei ok: 'varId' (kumulativer
      * Zähler, kWh), 'text' Quelle.
      *
@@ -1256,49 +1287,107 @@ class Szenariorechner extends IPSModule
         }
         $res = ['state' => 'none', 'varId' => 0, 'text' => '', 'ids' => []];
         $cands = [];
-        foreach ([[self::METERHUB_GUID, 'MHUB_GetFunctions'], [self::METERHUB_VIRTUAL_GUID, 'MHUBV_GetFunctions']] as [$guid, $fn]) {
-            if (!function_exists($fn)) {
-                continue;
+        foreach ($this->meterHubAssignments('grid') as $c) {
+            $a = $c['assign'];
+            if ((int) ($a['energyImportID'] ?? 0) <= 0 || ($a['energyKind'] ?? 'counter') !== 'counter' || ($a['energyMeasured'] ?? true) === false) {
+                continue;   // nur echte, gemessene Zählerstände (nie hochgerechnet)
             }
-            foreach ((@IPS_GetInstanceListByModuleID($guid) ?: []) as $iid) {
-                $r = $this->readPartnerContract(fn() => $fn($iid), "$fn #$iid");
-                foreach ((array) ($r['assignments'] ?? []) as $a) {
-                    if (!is_array($a) || ($a['function'] ?? '') !== 'grid' || (int) ($a['energyImportID'] ?? 0) <= 0) {
-                        continue;
-                    }
-                    if (($a['energyKind'] ?? 'counter') !== 'counter' || ($a['energyMeasured'] ?? true) === false) {
-                        continue;   // nur echte, gemessene Zählerstände (nie hochgerechnet)
-                    }
-                    $vid = (int) $a['energyImportID'];
-                    $cands[] = ['inst' => (int) $iid, 'vid' => $vid, 'auth' => (string) ($a['authority'] ?? $r['authority'] ?? 'auxiliary'),
-                                'archived' => $this->getArchiveID($vid) > 0];
-                }
-            }
+            $vid = (int) $a['energyImportID'];
+            $cands[] = ['inst' => $c['inst'], 'vid' => $vid, 'auth' => $c['auth'], 'archived' => $this->getArchiveID($vid) > 0];
         }
+        return $this->sourceCache['grid'] = $this->pickSource($cands, $res, 'Netzanschluss');
+    }
+
+    /**
+     * Auswahl unter Kandidaten [inst, vid, auth, archived]: nur archivierte, billing vor auxiliary, bei
+     * mehreren gleichrangigen nicht raten.
+     */
+    private function pickSource(array $cands, array $res, string $what): array
+    {
         if (count($cands) === 0) {
-            return $this->sourceCache['grid'] = $res;
+            return $res;
         }
         $usable = array_values(array_filter($cands, fn($c) => $c['archived']));
         if (count($usable) === 0) {
             $res['state'] = 'unarchived';
             $res['ids'] = array_values(array_unique(array_column($cands, 'inst')));
-            return $this->sourceCache['grid'] = $res;
+            return $res;
         }
         $billing = array_values(array_filter($usable, fn($c) => $c['auth'] === 'billing'));
         $pool = count($billing) > 0 ? $billing : $usable;
         if (count($pool) > 1) {
             $res['state'] = 'multiple';
             $res['ids'] = array_values(array_unique(array_column($pool, 'inst')));
-            return $this->sourceCache['grid'] = $res;
+            return $res;
         }
         $c = $pool[0];
-        $name = @IPS_GetName($c['inst']);
         $res['state'] = 'ok';
         $res['varId'] = $c['vid'];
         $res['ids'] = [$c['inst']];
-        $res['text'] = 'MeterHub #' . $c['inst'] . ($name ? " „{$name}“" : '') . ', Netzanschluss, '
-            . ($c['auth'] === 'billing' ? 'Abrechnungszähler' : 'Hilfszähler');
-        return $this->sourceCache['grid'] = $res;
+        $res['text'] = $this->meterHubText($c['inst'], $what, $c['auth']);
+        $res['isCounter'] = (bool) ($c['counter'] ?? true);
+        return $res;
+    }
+
+    /**
+     * Hausverbrauch aus MeterHub (`house`, + = Verbrauch, verbindlich). Bevorzugt der kumulative Zähler
+     * `energyImportID` (vorzeichenfrei), sonst die Leistung `powerID` (W) NACH einer Vorzeichenprüfung der
+     * letzten 7 Tage: Median über 0 und höchstens 20 % negative Stundenwerte, sonst state 'sign' und die
+     * Quelle wird nicht verwendet — ein falsch gestellter Zähler darf nicht still in die Rechnung gehen und
+     * wird nie umgedreht. state: ok|none|multiple|unarchived|sign.
+     *
+     * @return array{state: string, varId: int, text: string, ids: array, isCounter: bool, reason?: string}
+     */
+    private function discoverHouse(): array
+    {
+        if (isset($this->sourceCache['house'])) {
+            return $this->sourceCache['house'];
+        }
+        $res = ['state' => 'none', 'varId' => 0, 'text' => '', 'ids' => [], 'isCounter' => false];
+        $cands = [];
+        foreach ($this->meterHubAssignments('house') as $c) {
+            $a = $c['assign'];
+            $counter = (int) ($a['energyImportID'] ?? 0) > 0 && ($a['energyKind'] ?? 'counter') === 'counter' && ($a['energyMeasured'] ?? true) !== false;
+            $vid = $counter ? (int) $a['energyImportID'] : (int) ($a['powerID'] ?? 0);
+            if ($vid <= 0) {
+                continue;
+            }
+            $cands[] = ['inst' => $c['inst'], 'vid' => $vid, 'auth' => $c['auth'], 'counter' => $counter, 'archived' => $this->getArchiveID($vid) > 0];
+        }
+        $picked = $this->pickSource($cands, $res, 'Hausverbrauch');
+        if ($picked['state'] === 'ok' && !$picked['isCounter']) {
+            $reason = $this->houseSignReason($picked['varId']);
+            if ($reason !== '') {
+                $picked['state'] = 'sign';
+                $picked['reason'] = $reason;
+            }
+        }
+        return $this->sourceCache['house'] = $picked;
+    }
+
+    /** '' = plausibel; sonst Grund, warum die Leistungsvariable nicht wie eine Hauslast aussieht. */
+    private function houseSignReason(int $varID): string
+    {
+        $end = strtotime('today midnight');
+        $series = $this->hourlyKwhSeries($varID, false, strtotime('-7 days', $end), $end);
+        $vals = $series === null ? [] : array_values($series['kwh']);
+        $n = count($vals);
+        if ($n < 12) {
+            return 'Vorzeichen nicht prüfbar: weniger als 12 Stundenwerte der letzten 7 Tage im Archiv';
+        }
+        sort($vals);
+        $median = ($n % 2) ? $vals[intdiv($n, 2)] : ($vals[$n / 2 - 1] + $vals[$n / 2]) / 2;
+        $neg = count(array_filter($vals, fn($x) => $x < 0)) / $n;
+        if ($median < 0) {
+            return 'Hausverbrauch dauerhaft negativ, Richtung am Zähler prüfen';
+        }
+        if ($median == 0) {
+            return 'Vorzeichen unklar: Median der letzten 7 Tage ist 0';
+        }
+        if ($neg > 0.2) {
+            return 'Vorzeichen unklar: ' . (int) round($neg * 100) . ' % der Stundenwerte sind negativ';
+        }
+        return '';
     }
 
     /**
@@ -1378,10 +1467,13 @@ class Szenariorechner extends IPSModule
         return $this->resolveSource('PvErzeugungVarID', $this->discoverPvPower());
     }
 
-    /** @return array{0: int, 1: string, 2: string} Hauslast: keine automatische Quelle. */
+    /** @return array{0: int, 1: string, 2: string, 3: bool} Hauslast: [ID, Text, Art, ist Zähler] */
     private function resolveLast(): array
     {
-        return $this->resolveSource('HausLastVarID', ['state' => 'none']);
+        $disc = $this->discoverHouse();
+        $r = $this->resolveSource('HausLastVarID', $disc);
+        // Automatisch: Zählerstand (kWh) oder Leistung (W) je nach Quelle; eigene Eingabe ist Leistung (W).
+        return [$r[0], $r[1], $r[2], $r[2] === 'auto' ? (bool) $disc['isCounter'] : false];
     }
 
     /**
@@ -1408,6 +1500,8 @@ class Szenariorechner extends IPSModule
                 $line = "✏️ $label: $ref ($text)";
             } elseif (($disc['state'] ?? '') === 'multiple') {
                 $line = "⚠️ $label: mehrere gleichrangige Quellen gefunden (Instanzen #" . implode(', #', $disc['ids']) . ') — es wird keine geraten, bitte unten die Variable selbst wählen.';
+            } elseif (($disc['state'] ?? '') === 'sign') {
+                $line = "⚠️ $label: " . ($disc['reason'] ?? 'Vorzeichen unklar') . ' (' . $disc['text'] . ') — die Quelle wird nicht verwendet und nicht umgedreht, bitte die Richtung am Zähler prüfen oder unten eine Variable wählen.';
             } elseif (($disc['state'] ?? '') === 'unarchived') {
                 $line = "⚠️ $label: Quelle gefunden (Instanz #" . implode(', #', $disc['ids']) . '), die Variable ist aber nicht archiviert — Archivierung einschalten oder unten eine archivierte Variable wählen.';
             } else {
@@ -1419,8 +1513,8 @@ class Szenariorechner extends IPSModule
             'kein MeterHub mit der Funktion „Netzanschluss“ und archiviertem Zählerstand gefunden, bitte unten die archivierte Variable wählen.');
         $mk('PvErzeugungVarID', 'PvErzeugungLine', 'PV-Erzeugung', $this->resolvePv(), $this->discoverPvPower(),
             'kein InverterHub mit archivierter PV-Leistung gefunden, bitte unten die archivierte Variable (Watt) wählen.');
-        $mk('HausLastVarID', 'HausLastLine', 'Hauslast', $this->resolveLast(), ['state' => 'none'],
-            'wird derzeit nicht automatisch übernommen (das Vorzeichen der MeterHub-Funktion „Hausverbrauch“ ist im Vertrag nicht verbindlich festgelegt), bitte unten die archivierte Variable (Watt) wählen.');
+        $mk('HausLastVarID', 'HausLastLine', 'Hauslast', $this->resolveLast(), $this->discoverHouse(),
+            'kein MeterHub mit der Funktion „Hausverbrauch“ und archivierter Quelle gefunden, bitte unten die archivierte Variable (Watt) wählen.');
         return $rows;
     }
 
