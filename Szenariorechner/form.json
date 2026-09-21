@@ -2,18 +2,39 @@
     "elements": [
         {
             "type": "ExpansionPanel",
-            "name": "ChangelogPanel",
-            "caption": "🆕 Neu in dieser Version",
+            "name": "PurposeIntroPanel",
             "expanded": true,
+            "caption": "👋  Wozu dieses Modul?",
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: Anlagenwerte, die automatisch von EMS kommen, stehen nicht mehr als 0 im Eingabefeld, sondern als Zeile mit Wert und Quelle (🔗). Eine eigene Eingabe (✏️) überschreibt den automatischen Wert; Eingabefelder erscheinen nur, wenn nichts automatisch kommt oder über den Knopf. Dazu je Verbindung eine Statuszeile (EMS, Tibber-Preiskurve)."
+                    "caption": "Der Szenariorechner rechnet mit den echten Verbrauchs- und Erzeugungsdaten der Anlage nach, ob sich ein dynamischer Stromvertrag, ein größerer Batteriespeicher oder der Beitritt zu §14a EnWG lohnen würde. Er ändert nichts an der Anlage, er zeigt nur Zahlen."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Die Anlagendaten holt er sich, wenn vorhanden, automatisch vom NRG-Stack EMS; die Preise des dynamischen Tarifs ebenfalls von dort. Die grafische Darstellung übernimmt das NRG-Stack Dashboard."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.7');"
+                    "onClick": "SZR_AckPurposeIntro($id);"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "name": "ChangelogPanel",
+            "caption": "🆕 Neu in Version 0.8",
+            "expanded": true,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Neu: Zahlen erscheinen nur noch, wenn die Datenlage trägt — es gibt keine erfundenen Standardwerte mehr (Preise, Annahmen stehen auf „nicht angegeben“, bis sie eingetragen sind). Der dynamische Vertrag rechnet mit dem echten Preisverlauf aus dem EMS-Bezugstarif statt mit den Preisen von heute und morgen. Die Speichergröße berücksichtigt die entgangene Einspeisevergütung. 👋 Neue Zweck-Einführung ganz oben."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Verstanden – nicht mehr anzeigen",
+                    "onClick": "SZR_DismissChangelog($id, '0.8');"
                 }
             ]
         },
@@ -30,7 +51,11 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack: aktuell Szenarien \"Dynamischer Vertrag vs. Festpreis\", \"Speichergröße\" und \"§14a-Beitritt\", weiteres Szenario (Förderende/Solarspitzengesetz) folgt. Details im KONZEPT.md des Repos."
+                    "caption": "Was-wäre-wenn-Wirtschaftlichkeitsrechner für den NRG-Stack. Szenarien: „Dynamischer Vertrag vs. Festpreis“ (Rückblick mit dem echten Preisverlauf), „Speichergröße“ (vereinfachte Simulation aus Erzeugung und Hauslast) und „§14a-Beitritt“ (Nutzereingabe-Annahmen). Ein Szenario rechnet erst, wenn seine Angaben da sind; was fehlt, steht in der jeweiligen Statuszeile. Weiteres Szenario (Förderende/Solarspitzengesetz) folgt."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Ergebnisse stehen als Variablen an der Instanz (eine Kennzahl je Szenario); die vollständigen Werte liefern die Funktionen SZR_Calculate…Scenario() an andere Module wie das Dashboard."
                 }
             ]
         },
@@ -131,30 +156,60 @@
             "items": [
                 {
                     "type": "Label",
-                    "name": "TibberStatusLabel",
+                    "name": "PriceSourceStatusLabel",
                     "caption": "Preisquelle wird geprüft …"
+                },
+                {
+                    "type": "Label",
+                    "caption": "ℹ️ Der Netzbezug wird derzeit nicht automatisch von InverterHub oder MeterHub übernommen, bitte hier die archivierte Variable auswählen."
                 },
                 {
                     "type": "SelectVariable",
                     "name": "NetzbezugVarID",
-                    "caption": "Netzbezugsvariable (archiviert, kWh oder W)"
+                    "caption": "Netzbezug (archivierte Variable)"
                 },
                 {
                     "type": "CheckBox",
                     "name": "NetzbezugIstZaehler",
-                    "caption": "Variable ist ein Energiezähler (kumulativ, kWh) statt Momentanleistung (W)"
+                    "caption": "Die Variable ist ein Energiezähler (kWh) statt einer Momentanleistung (W)"
+                },
+                {
+                    "type": "PopupButton",
+                    "caption": "Energiezähler oder Momentanleistung, was trifft zu?",
+                    "popup": {
+                        "caption": "Zähler oder Leistung",
+                        "items": [
+                            {
+                                "type": "Label",
+                                "caption": "Ein Energiezähler zählt kumuliert kWh (Zählerstand steigt), eine Momentanleistung zeigt Watt zum jeweiligen Zeitpunkt. Häkchen setzen, wenn die gewählte Variable ein Zählerstand ist. Beides muss archiviert sein, damit der Rückblick rechnen kann."
+                            }
+                        ]
+                    }
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "FestpreisCtKwh",
-                    "caption": "Aktueller Festpreis (ct/kWh)",
+                    "caption": "Aktueller Festpreis (ct/kWh brutto, 0 = nicht angegeben)",
                     "digits": 2
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "FestpreisGrundpreisMonat",
-                    "caption": "Grundpreis (€/Monat)",
+                    "caption": "Grundpreis des aktuellen Vertrags (€/Monat, 0 = keiner)",
                     "digits": 2
+                },
+                {
+                    "type": "PopupButton",
+                    "caption": "Wie rechnet das Szenario „Dynamischer Vertrag“?",
+                    "popup": {
+                        "caption": "Rechenweg",
+                        "items": [
+                            {
+                                "type": "Label",
+                                "caption": "Für jede Stunde der letzten 30 Tage wird der Netzbezug einmal mit dem Festpreis und einmal mit dem tatsächlichen Preis des dynamischen Tarifs bewertet. Verglichen werden nur Stunden, für die ein Preis vorliegt; wie viel das ist, steht im Ergebnis („coverage“). Die Variable an der Instanz erscheint nur bei mindestens 90 % Abdeckung."
+                            }
+                        ]
+                    }
                 }
             ]
         },
@@ -164,25 +219,42 @@
             "expanded": true,
             "items": [
                 {
+                    "type": "Label",
+                    "caption": "ℹ️ Erzeugung und Hauslast werden derzeit nicht automatisch von InverterHub oder MeterHub übernommen, bitte hier die archivierten Variablen (Leistung in W) auswählen. Die aktuelle Speichergröße kommt aus den Anlagendaten oben."
+                },
+                {
                     "type": "SelectVariable",
                     "name": "PvErzeugungVarID",
-                    "caption": "PV-Erzeugung (archiviert, W)"
+                    "caption": "PV-Erzeugung (archivierte Variable, Watt)"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "HausLastVarID",
-                    "caption": "Hauslast (archiviert, W)"
+                    "caption": "Hauslast (archivierte Variable, Watt)"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "SpeicherPreisEurKwh",
-                    "caption": "Speicherpreis (€/kWh, für Amortisationsrechnung)",
+                    "caption": "Speicherpreis (€ je kWh, 0 = keine Amortisationsrechnung)",
                     "digits": 0
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "SpeicherAbschreibungJahre",
-                    "caption": "Angenommene Nutzungsdauer (Jahre)"
+                    "caption": "Angenommene Nutzungsdauer (Jahre, 0 = nicht angegeben)"
+                },
+                {
+                    "type": "PopupButton",
+                    "caption": "Wie rechnet das Szenario „Speichergröße“?",
+                    "popup": {
+                        "caption": "Rechenweg",
+                        "items": [
+                            {
+                                "type": "Label",
+                                "caption": "Aus Erzeugung und Hauslast der letzten 30 Tage wird für verschiedene Speichergrößen simuliert, wie viel Netzbezug bliebe. Eine zusätzlich gespeicherte kWh spart den Bezugspreis, hätte sonst aber Einspeisevergütung erhalten; angesetzt wird die Differenz. Das Modell kennt keine Wirkungsgradverluste und keine Leistungsgrenzen, die Ergebnisse sind daher eher optimistisch."
+                            }
+                        ]
+                    }
                 }
             ]
         },
@@ -256,7 +328,13 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "💬 Fragen und Rückmeldungen im Symcon-Forum-Thread zu diesem Modul (Link folgt nach Store-Veröffentlichung)."
+                    "caption": "💬 Fragen, Fehler und Wünsche bitte als Issue im GitHub-Repo melden (einen Forum-Thread gibt es noch nicht)."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Zum GitHub-Repo",
+                    "onClick": "echo 'https://github.com/DG65/NRGSzenariorechner/issues';",
+                    "link": true
                 },
                 {
                     "type": "Button",
@@ -264,6 +342,53 @@
                     "onClick": "SZR_DismissForumHint($id);"
                 }
             ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "expanded": false,
+            "caption": "🧡  Über dieses Modul",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Entstanden aus echter Begeisterung für die eigene Anlage — und ein paar durchgetippten Abenden. Trotzdem: Software-Hobby hin oder her, das hier ist geistiges Eigentum und echte Arbeit steckt drin."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Lizenz: PolyForm Noncommercial 1.0.0 — privat und nicht-kommerziell frei nutzbar, für den gewerblichen Einsatz braucht es eine gesonderte Lizenz vom Rechteinhaber."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Lizenztext ansehen",
+                    "onClick": "echo 'https://github.com/DG65/NRGSzenariorechner/blob/ems-integration/LICENSE';",
+                    "link": true
+                },
+                {
+                    "type": "Label",
+                    "caption": "Gewerbliche Nutzung oder Fragen zur Lizenz? Einfach melden: dietmar@gureth.eu"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Gefällt dir das Modul und du möchtest trotzdem etwas dalassen? Über eine kleine Spende freue ich mich — völlig freiwillig, keine Gegenleistung nötig."
+                },
+                {
+                    "type": "Button",
+                    "caption": "☕  Spenden via PayPal",
+                    "onClick": "echo 'https://paypal.me/DietmarGureth';",
+                    "link": true
+                }
+            ]
+        }
+    ],
+    "status": [
+        {
+            "code": 102,
+            "icon": "active",
+            "caption": "Mindestens ein Szenario ist rechenbereit"
+        },
+        {
+            "code": 104,
+            "icon": "inactive",
+            "caption": "Noch nichts eingerichtet — je Szenario die fehlenden Angaben ergänzen"
         }
     ]
 }

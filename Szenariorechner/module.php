@@ -59,25 +59,27 @@ class Szenariorechner extends IPSModule
         $this->RegisterPropertyBoolean('NetzbezugIstZaehler', true);
 
         // ── Vergleichs-Festpreis (aktueller Vertrag des Nutzers) ──
-        $this->RegisterPropertyFloat('FestpreisCtKwh', 32.0);
-        $this->RegisterPropertyFloat('FestpreisGrundpreisMonat', 12.0);
+        // Standard 0 = nicht angegeben: ein erfundener Preis würde für jeden Nutzer
+        // still ein falsches Ergebnis liefern (Verbund-Regel "keine eigene Anlage als Norm").
+        $this->RegisterPropertyFloat('FestpreisCtKwh', 0.0);
+        $this->RegisterPropertyFloat('FestpreisGrundpreisMonat', 0.0);
 
         // ── Datenquellen PV-Erzeugung/Hauslast (historisch, für Szenario 2: Speichergröße) ──
         // Beide als LEISTUNG (W) erwartet — üblicherweise InverterHub-/MeterHub-
         // Momentanwerte, nicht kumulative Zähler (anders als NetzbezugVarID oben).
         $this->RegisterPropertyInteger('PvErzeugungVarID', 0);
         $this->RegisterPropertyInteger('HausLastVarID', 0);
-        $this->RegisterPropertyFloat('SpeicherPreisEurKwh', 400.0);
-        $this->RegisterPropertyInteger('SpeicherAbschreibungJahre', 15);
+        $this->RegisterPropertyFloat('SpeicherPreisEurKwh', 0.0);
+        $this->RegisterPropertyInteger('SpeicherAbschreibungJahre', 0);
 
         // ── §14a-Beitritt (Szenario 3) — reine Nutzereingabe-Annahmen, da
         // SBH_GetState (SteuerboxHub) aktuell nur den Live-Zustand liefert,
         // keine Historie (bestätigt EMS-Koordination 25.07.2026). Sobald eine
         // Historisierung existiert, kann hierauf umgestellt werden.
-        $this->RegisterPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr', 150.0);
-        $this->RegisterPropertyInteger('Paragraph14aAnnahmeEreignisseJahr', 20);
-        $this->RegisterPropertyInteger('Paragraph14aAnnahmeDauerMinuten', 120);
-        $this->RegisterPropertyFloat('Paragraph14aAnnahmeReduktionKw', 4.2);
+        $this->RegisterPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr', 0.0);
+        $this->RegisterPropertyInteger('Paragraph14aAnnahmeEreignisseJahr', 0);
+        $this->RegisterPropertyInteger('Paragraph14aAnnahmeDauerMinuten', 0);
+        $this->RegisterPropertyFloat('Paragraph14aAnnahmeReduktionKw', 0.0);
 
         // ── Netztransparenz.de-Zugang (Vorbereitung Szenario 4) ──
         // Client_ID/Secret sind dauerhaft benötigte Zugangsdaten (OAuth2
@@ -97,8 +99,7 @@ class Szenariorechner extends IPSModule
         $this->RegisterAttributeString('LastEvaluation', '{}');
         $this->RegisterAttributeString('ChangelogSeen', '');
         $this->RegisterAttributeBoolean('ForumHintGone', false);
-
-        $this->RegisterVariables();
+        $this->RegisterAttributeBoolean('PurposeIntroGone', false);
 
         // Täglich alle verfügbaren Szenarien neu rechnen, damit die
         // Kern-Ergebnisvariablen nicht dauerhaft veraltet stehen bleiben —
@@ -126,12 +127,13 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.7']);
+        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.8']);
+        $this->setFormElement($form['elements'], 'PurposeIntroPanel', ['visible' => !$this->ReadAttributeBoolean('PurposeIntroGone')]);
         $this->setFormElement($form['elements'], 'ForumHint', ['visible' => !$this->ReadAttributeBoolean('ForumHintGone')]);
         $this->setFormElement($form['elements'], 'DocVersionLabel', ['caption' => $this->buildVersionCaption()]);
         $this->setFormElement($form['elements'], 'NetztransparenzStatusLabel', ['caption' => $this->buildNetztransparenzStatusCaption()]);
         $this->setFormElement($form['elements'], 'PlantInfoStatusLabel', ['caption' => $this->buildPlantInfoStatusCaption()]);
-        $this->setFormElement($form['elements'], 'TibberStatusLabel', ['caption' => $this->buildTibberStatusCaption()]);
+        $this->setFormElement($form['elements'], 'PriceSourceStatusLabel', ['caption' => $this->buildPriceSourceStatusCaption()]);
 
         // Je Anlagenwert: Zeile mit Wert und Quelle, Eingabefeld nur wenn nichts automatisch kommt.
         $anyHidden = false;
@@ -193,39 +195,62 @@ class Szenariorechner extends IPSModule
     {
         $scenarios = [];
 
-        $tibberOk = function_exists('TIBBERGR_GetPriceCurve');
-        $netzbezugOk = $this->ReadPropertyInteger('NetzbezugVarID') > 0;
+        // Ein Wert von 0 heißt "nicht angegeben" — es gibt bewusst keine erfundenen
+        // Standardwerte, deshalb rechnet ein Szenario erst, wenn seine Angaben da sind.
+        $price = $this->dynamicPriceSource();
+        $reasons = [];
+        if ((int) $this->ReadPropertyInteger('NetzbezugVarID') <= 0) {
+            $reasons[] = 'Netzbezugsvariable nicht angegeben';
+        }
+        if ((float) $this->ReadPropertyFloat('FestpreisCtKwh') <= 0.0) {
+            $reasons[] = 'aktueller Festpreis nicht angegeben';
+        }
+        if (!$price['ok']) {
+            $reasons[] = $price['reason'];
+        }
         $scenarios[] = [
             'type'            => 'dynamicTariff',
             'label'           => 'Dynamischer Vertrag vs. Festpreis',
             'function'        => 'CalculateDynamicTariffScenario',
-            'contractVersion' => '1.0',
-            'available'       => $tibberOk && $netzbezugOk,
-            'reason'          => !$netzbezugOk
-                ? 'Netzbezugsvariable nicht konfiguriert'
-                : (!$tibberOk ? 'TibberGridRewards nicht gefunden' : ''),
+            'contractVersion' => '1.1',
+            'available'       => count($reasons) === 0,
+            'reason'          => implode('; ', $reasons),
         ];
 
-        $storageVarsOk = $this->ReadPropertyInteger('PvErzeugungVarID') > 0
-            && $this->ReadPropertyInteger('HausLastVarID') > 0;
+        $reasons = [];
+        if ((int) $this->ReadPropertyInteger('PvErzeugungVarID') <= 0 || (int) $this->ReadPropertyInteger('HausLastVarID') <= 0) {
+            $reasons[] = 'PV-Erzeugungs- oder Hauslastvariable nicht angegeben';
+        }
+        if ((float) $this->ReadPropertyFloat('FestpreisCtKwh') <= 0.0) {
+            $reasons[] = 'aktueller Bezugspreis (Festpreis) nicht angegeben';
+        }
         $scenarios[] = [
             'type'            => 'storageSize',
             'label'           => 'Speichergröße',
             'function'        => 'CalculateStorageSizeScenario',
-            'contractVersion' => '1.0',
-            'available'       => $storageVarsOk,
-            'reason'          => $storageVarsOk ? '' : 'PV-Erzeugungs-/Hauslastvariable nicht konfiguriert',
+            'contractVersion' => '1.1',
+            'available'       => count($reasons) === 0,
+            'reason'          => implode('; ', $reasons),
         ];
 
-        // §14a-Beitritt ist reine Nutzereingabe (keine Fremdmodul-Voraussetzung),
-        // daher immer verfügbar — siehe KONZEPT.md Abschnitt 3.
+        // §14a-Beitritt ist reine Nutzereingabe (keine Fremdmodul-Voraussetzung), rechnet
+        // aber nur mit ausdrücklich angegebenen Annahmen — siehe KONZEPT.md Abschnitt 3.
+        $missing = [];
+        if ((float) $this->ReadPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr') <= 0.0) {
+            $missing[] = 'Netzentgelt-Ersparnis';
+        }
+        if ((int) $this->ReadPropertyInteger('Paragraph14aAnnahmeEreignisseJahr') <= 0
+            || (int) $this->ReadPropertyInteger('Paragraph14aAnnahmeDauerMinuten') <= 0
+            || (float) $this->ReadPropertyFloat('Paragraph14aAnnahmeReduktionKw') <= 0.0) {
+            $missing[] = 'Dimm-Annahmen (Ereignisse, Dauer, Lastreduktion)';
+        }
         $scenarios[] = [
             'type'            => 'paragraph14a',
             'label'           => '§14a-Beitritt',
             'function'        => 'CalculateParagraph14aScenario',
-            'contractVersion' => '1.0',
-            'available'       => true,
-            'reason'          => '',
+            'contractVersion' => '1.1',
+            'available'       => count($missing) === 0,
+            'reason'          => count($missing) ? implode(' und ', $missing) . ' nicht angegeben' : '',
         ];
 
         return $scenarios;
@@ -356,6 +381,12 @@ class Szenariorechner extends IPSModule
         $this->UpdateFormField('ChangelogPanel', 'visible', false);
     }
 
+    public function AckPurposeIntro()
+    {
+        $this->WriteAttributeBoolean('PurposeIntroGone', true);
+        $this->UpdateFormField('PurposeIntroPanel', 'visible', false);
+    }
+
     public function DismissForumHint()
     {
         $this->WriteAttributeBoolean('ForumHintGone', true);
@@ -373,25 +404,19 @@ class Szenariorechner extends IPSModule
             return;
         }
 
-        $status = 102;
-        $message = '';
+        // MaintainVariable ist idempotent (create-or-update) und gehört in ApplyChanges
+        // (SUITE.md Stolperstein 3) — nie RegisterVariableXXX bei jedem Lauf.
+        $this->RegisterVariables();
 
-        if ($this->ReadPropertyInteger('NetzbezugVarID') <= 0) {
-            $status = 104;
-            $message = 'Netzbezugsvariable nicht konfiguriert';
-        } elseif (!function_exists('TIBBERGR_GetPriceCurve')) {
-            // Eigenständigkeitsregel: Modul bleibt lauffähig, meldet nur die
-            // fehlende Kopplung. Ohne TibberGridReward kann Szenario 1 nicht
-            // rechnen (Netztransparenz-Spotmarktpreise als Alternativquelle
-            // sind für Phase 1 bewusst noch nicht angebunden, siehe KONZEPT.md).
-            $status = 200;
-            $message = 'TibberGridRewards nicht gefunden — Preiskurve fehlt für Szenario "Dynamischer Vertrag"';
+        // 102 = mindestens ein Szenario rechenbereit, 104 = noch nichts eingerichtet
+        // (neutral, kein Fehler). Ein fehlendes Partnermodul ist KEIN Fehlerstatus
+        // (Regel 9d: geparkte Zustände nicht als Fehler > 200 melden); die Gründe stehen
+        // je Szenario in GetAvailableScenarios() und in den Statuszeilen des Formulars.
+        $anyReady = false;
+        foreach ($this->GetAvailableScenarios() as $scenario) {
+            $anyReady = $anyReady || $scenario['available'];
         }
-
-        $this->SetStatus($status);
-        if ($message !== '') {
-            $this->SendDebug(__FUNCTION__, $message, 0);
-        }
+        $this->SetStatus($anyReady ? 102 : 104);
 
         $this->SetTimerInterval('RefreshScenarios', 24 * 60 * 60 * 1000);
         // Sofort einmal rechnen statt bis zu 24h auf den ersten Wert zu warten.
@@ -441,132 +466,178 @@ class Szenariorechner extends IPSModule
     // -----------------------------------------------------------------
 
     /**
-     * Rechnet nach, was ein dynamischer Vertrag (TibberGridReward-Preiskurve,
-     * viertelstündlich) über die letzten $days Tage anstelle des aktuellen
-     * Festpreisvertrags gekostet hätte, auf Basis des historischen Netzbezugs.
+     * Rechnet nach, was ein dynamischer Vertrag über die letzten $days Kalendertage anstelle
+     * des aktuellen Festpreisvertrags gekostet hätte, auf Basis des historischen Netzbezugs.
      *
-     * Granularität bewusst stündlich (AC_GetAggregatedValues, aggregation=0):
-     * robust, ohne Rohdaten-Integration; die Preiskurve wird je Stunde aus dem
-     * Mittel ihrer Viertelstunden-Slots gebildet. Feinere Auflösung (analog
-     * Lastprognose::integratedProfile) ist ein möglicher späterer Ausbau, kein
-     * Blocker für eine erste funktionsfähige Phase.
+     * Preise: der tatsächliche Verlauf des dynamischen Tarifs aus dem EMS-Bezugstarif
+     * („Tibber“), ct/kWh BRUTTO je Viertelstunde, zu Stundenmitteln verdichtet (siehe
+     * dynamicPriceSource()). Verglichen wird NUR über Stunden, für die ein Preis vorliegt —
+     * beide Seiten über dieselben Stunden, damit fehlende Preise das Ergebnis nicht
+     * verzerren; `coverage` sagt, wie viel des Netzbezugs damit abgedeckt ist.
      *
-     * Rückgabe:
-     *   'contractVersion'      => '1.0',
+     * Granularität bewusst stündlich (AC_GetAggregatedValues, aggregation=0).
+     * Geldbeträge: Festpreis und dynamischer Preis in ct/kWh brutto, Ergebnisse in EUR.
+     *
+     * Rückgabe (contractVersion 1.1, additiv zu 1.0: coverage/coveredHours/…/reason):
+     *   'contractVersion'      => '1.1',
      *   'periodDays'           => int,
-     *   'periodFrom'/'periodTo'=> int (Unix),
-     *   'hoursEvaluated'       => int,       // Stunden mit vollständigen Daten
-     *   'consumptionKwh'       => float,     // Summe Netzbezug im Zeitraum
-     *   'costFixedEur'         => float,     // Kosten mit aktuellem Festpreis (inkl. Grundpreis anteilig)
-     *   'costDynamicEur'       => float,     // Kosten mit dynamischer Preiskurve (ohne Grundpreis, Tibber-eigener wird nicht unterstellt)
-     *   'savingsEur'           => float,     // costFixedEur - costDynamicEur (positiv = dynamisch günstiger)
+     *   'periodFrom'/'periodTo'=> int (Unix, Kalendertage),
+     *   'consumptionKwh'       => float,  // Netzbezug im Zeitraum insgesamt
+     *   'consumptionHours'     => int,    // Stunden mit Netzbezug
+     *   'coveredHours'         => int,    // davon mit Preis des dynamischen Tarifs
+     *   'hoursEvaluated'       => int,    // wie coveredHours (Feld aus Vertrag 1.0, bleibt erhalten)
+     *   'coverage'             => float,  // coveredHours / consumptionHours (0..1)
+     *   'costFixedEur'         => float,  // nur über die abgedeckten Stunden, inkl. anteiligem Grundpreis
+     *   'costDynamicEur'       => float,  // nur über die abgedeckten Stunden, inkl. Grundgebühr falls bekannt
+     *   'savingsEur'           => float,  // costFixedEur - costDynamicEur (positiv = dynamisch günstiger)
      *   'avgFixedCtKwh'        => float,
-     *   'avgDynamicCtKwh'      => float,
-     *   'dataComplete'         => bool,      // false, wenn Archiv oder Preiskurve Lücken hatten
+     *   'avgDynamicCtKwh'      => float,  // verbrauchsgewichtet
+     *   'dynamicBaseFeeEur'    => float,  // Grundgebühr des dynamischen Tarifs im Zeitraum
+     *   'dynamicBaseFeeKnown'  => bool,   // false = nicht angesetzt (Tibber-Tarifkonfiguration fehlt)
+     *   'priceSource'          => string, // z. B. "EMS #12345, Bezugstarif Tibber"
+     *   'gapDays'              => int,    // Tage, deren Archivabfrage fehlschlug
+     *   'dataComplete'         => bool,   // coverage >= 90 % und keine Archivlücke
+     *   'reason'               => string, // deutsch: warum nichts/nur teilweise gerechnet wurde
      */
     public function CalculateDynamicTariffScenario(int $days): array
     {
+        $fixedCt = (float) $this->ReadPropertyFloat('FestpreisCtKwh');
         $result = [
-            'contractVersion' => '1.0',
-            'periodDays'      => $days,
-            'periodFrom'      => 0,
-            'periodTo'        => 0,
-            'hoursEvaluated'  => 0,
-            'consumptionKwh'  => 0.0,
-            'costFixedEur'    => 0.0,
-            'costDynamicEur'  => 0.0,
-            'savingsEur'      => 0.0,
-            'avgFixedCtKwh'   => $this->ReadPropertyFloat('FestpreisCtKwh'),
-            'avgDynamicCtKwh' => 0.0,
-            'dataComplete'    => false,
+            'contractVersion'     => '1.1',
+            'periodDays'          => $days,
+            'periodFrom'          => 0,
+            'periodTo'            => 0,
+            'consumptionKwh'      => 0.0,
+            'consumptionHours'    => 0,
+            'hoursEvaluated'      => 0,
+            'coveredHours'        => 0,
+            'coverage'            => 0.0,
+            'costFixedEur'        => 0.0,
+            'costDynamicEur'      => 0.0,
+            'savingsEur'          => 0.0,
+            'avgFixedCtKwh'       => $fixedCt,
+            'avgDynamicCtKwh'     => 0.0,
+            'dynamicBaseFeeEur'   => 0.0,
+            'dynamicBaseFeeKnown' => false,
+            'priceSource'         => '',
+            'gapDays'             => 0,
+            'dataComplete'        => false,
+            'reason'              => '',
         ];
-
         if ($days <= 0) {
+            $result['reason'] = 'Zeitraum muss mindestens 1 Tag umfassen';
+            return $result;
+        }
+        $avail = $this->scenarioInfo('dynamicTariff');
+        if (!$avail['available']) {
+            $result['reason'] = (string) $avail['reason'];
             return $result;
         }
 
-        $varID = $this->ReadPropertyInteger('NetzbezugVarID');
-        if ($varID <= 0 || !IPS_VariableExists($varID)) {
-            $this->SendDebug(__FUNCTION__, 'Netzbezugsvariable fehlt/ungültig', 0);
-            return $result;
-        }
-
-        if (!function_exists('TIBBERGR_GetPriceCurve')) {
-            $this->SendDebug(__FUNCTION__, 'TibberGridRewards nicht vorhanden', 0);
-            return $result;
-        }
-
+        // Kalendertage statt fester 86400 Sekunden (Zeitumstellung, Stolperstein 18).
         $end = strtotime('today midnight');
-        $start = $end - ($days * 86400);
+        $start = strtotime("-$days days", $end);
         $result['periodFrom'] = $start;
         $result['periodTo'] = $end;
 
-        $isCounter = $this->ReadPropertyBoolean('NetzbezugIstZaehler');
-        $hourlyKwh = $this->hourlyKwhSeries($varID, $isCounter, $start, $end);
-        if ($hourlyKwh === null) {
+        $series = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('NetzbezugVarID'), (bool) $this->ReadPropertyBoolean('NetzbezugIstZaehler'), $start, $end);
+        if ($series === null) {
+            $result['reason'] = 'Netzbezugsvariable ist ungültig oder nicht archiviert';
             return $result;
         }
+        $result['gapDays'] = $series['gapDays'];
 
-        // Preiskurve holen und auf Stundenmittel verdichten.
-        $slots = $this->getTibberPriceCurve();
-        $hourlyPriceSum = [];
-        $hourlyPriceCount = [];
-        foreach ($slots as $slot) {
-            if (!isset($slot['start'], $slot['price'])) {
-                continue;
-            }
-            $hourStart = (int) (floor($slot['start'] / 3600) * 3600);
-            if ($hourStart < $start || $hourStart >= $end) {
-                continue;
-            }
-            $hourlyPriceSum[$hourStart] = ($hourlyPriceSum[$hourStart] ?? 0.0) + (float) $slot['price'];
-            $hourlyPriceCount[$hourStart] = ($hourlyPriceCount[$hourStart] ?? 0) + 1;
+        $sum = [];
+        $cnt = [];
+        foreach ($this->dynamicPriceSlots($start, $end) as [$sStart, , $ct]) {
+            $h = (int) (floor($sStart / 3600) * 3600);
+            $sum[$h] = ($sum[$h] ?? 0.0) + $ct;
+            $cnt[$h] = ($cnt[$h] ?? 0) + 1;
         }
 
-        $fixedCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
-        $grundpreisMonat = $this->ReadPropertyFloat('FestpreisGrundpreisMonat');
-
-        $consumptionKwh = 0.0;
+        $consumption = 0.0;
+        $coveredKwh = 0.0;
+        $consHours = 0;
+        $covHours = 0;
         $costFixed = 0.0;
-        $costDynamic = 0.0;
-        $priceWeightedSum = 0.0;
-        $hoursEvaluated = 0;
-        $hoursMissingPrice = 0;
-
-        foreach ($hourlyKwh as $hourStart => $kwh) {
+        $costDyn = 0.0;
+        $weighted = 0.0;
+        foreach ($series['kwh'] as $hour => $kwh) {
             if ($kwh <= 0.0) {
                 continue;
             }
-            $consumptionKwh += $kwh;
-            $costFixed += $kwh * $fixedCtKwh / 100.0;
-
-            if (isset($hourlyPriceSum[$hourStart]) && $hourlyPriceCount[$hourStart] > 0) {
-                $dynCtKwh = $hourlyPriceSum[$hourStart] / $hourlyPriceCount[$hourStart];
-                $costDynamic += $kwh * $dynCtKwh / 100.0;
-                $priceWeightedSum += $kwh * $dynCtKwh;
-                $hoursEvaluated++;
-            } else {
-                // Keine Preisdaten für diese Stunde: konservativ mit Festpreis bewertet,
-                // damit die Differenz nicht künstlich verzerrt wird.
-                $costDynamic += $kwh * $fixedCtKwh / 100.0;
-                $hoursMissingPrice++;
+            $consHours++;
+            $consumption += $kwh;
+            if (!isset($cnt[$hour])) {
+                continue;   // kein Preis: bewusst außen vor, nicht mit einem Ersatzpreis füllen
             }
+            $dynCt = $sum[$hour] / $cnt[$hour];
+            $covHours++;
+            $coveredKwh += $kwh;
+            $costFixed += $kwh * $fixedCt / 100.0;
+            $costDyn += $kwh * $dynCt / 100.0;
+            $weighted += $kwh * $dynCt;
+        }
+        $coverage = $consHours > 0 ? $covHours / $consHours : 0.0;
+
+        // Grundpreise nur anteilig für den abgedeckten Teil des Zeitraums.
+        $months = $days / 30.437;
+        $costFixed += (float) $this->ReadPropertyFloat('FestpreisGrundpreisMonat') * $months * $coverage;
+        $baseFee = $this->tibberBaseFeeMonth();
+        if ($baseFee !== null) {
+            $fee = $baseFee * $months * $coverage;
+            $costDyn += $fee;
+            $result['dynamicBaseFeeEur'] = round($fee, 2);
+            $result['dynamicBaseFeeKnown'] = true;
         }
 
-        $grundpreisAnteil = $grundpreisMonat * ($days / 30.437);
-
-        $result['consumptionKwh'] = round($consumptionKwh, 2);
-        $result['hoursEvaluated'] = $hoursEvaluated;
-        $result['costFixedEur'] = round($costFixed + $grundpreisAnteil, 2);
-        $result['costDynamicEur'] = round($costDynamic + $grundpreisAnteil, 2);
-        $result['savingsEur'] = round($result['costFixedEur'] - $result['costDynamicEur'], 2);
-        $result['avgDynamicCtKwh'] = $consumptionKwh > 0 ? round($priceWeightedSum / $consumptionKwh, 3) : 0.0;
-        $result['dataComplete'] = ($hoursMissingPrice === 0) && (count($hourlyKwh) > 0);
+        $src = $this->dynamicPriceSource();
+        $result['priceSource'] = $src['ok'] ? 'EMS #' . $src['emsId'] . ', Bezugstarif Tibber' : '';
+        $result['consumptionKwh'] = round($consumption, 2);
+        $result['consumptionHours'] = $consHours;
+        $result['coveredHours'] = $covHours;
+        $result['hoursEvaluated'] = $covHours;   // Feld aus Vertrag 1.0 bleibt (nur additive Änderungen)
+        $result['coverage'] = round($coverage, 3);
+        $result['costFixedEur'] = round($costFixed, 2);
+        $result['costDynamicEur'] = round($costDyn, 2);
+        $result['savingsEur'] = round($costFixed - $costDyn, 2);
+        $result['avgDynamicCtKwh'] = $coveredKwh > 0 ? round($weighted / $coveredKwh, 3) : 0.0;
+        $result['dataComplete'] = $consHours > 0 && $coverage >= 0.9 && $series['gapDays'] === 0;
+        if ($consHours === 0) {
+            $result['reason'] = 'Im Zeitraum wurde kein Netzbezug archiviert';
+        } elseif ($covHours === 0) {
+            $result['reason'] = 'Für den Zeitraum liegen keine Preise des dynamischen Tarifs vor';
+        } elseif (!$result['dataComplete']) {
+            $result['reason'] = sprintf('Nur %d von %d Stunden mit Preis (%d %%)%s', $covHours, $consHours, (int) round($coverage * 100),
+                $series['gapDays'] > 0 ? ', ' . $series['gapDays'] . ' Tag(e) ohne Archivdaten' : '');
+        }
 
         $this->WriteAttributeString('LastEvaluation', json_encode($result));
-        $this->SetValue('DynamicTariffSavingsEur', $result['savingsEur']);
-
+        // Nur eine belastbare Zahl zeigen: bei zu geringer Abdeckung bleibt der letzte gute Wert stehen.
+        if ($result['dataComplete']) {
+            $this->SetValue('DynamicTariffSavingsEur', $result['savingsEur']);
+        }
         return $result;
+    }
+
+    /** Grundgebühr des Tibber-Tarifs (€/Monat) aus der Tarifkonfiguration, null wenn unbekannt. */
+    private function tibberBaseFeeMonth(): ?float
+    {
+        if (!function_exists('TIBBERGR_GetTariffConfig')) {
+            return null;
+        }
+        foreach ((@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []) as $iid) {
+            try {
+                $cfg = TIBBERGR_GetTariffConfig($iid);
+            } catch (\Throwable $e) {
+                $this->LogMessage('TIBBERGR_GetTariffConfig fehlgeschlagen: ' . $e->getMessage(), KL_WARNING);
+                continue;
+            }
+            if (is_array($cfg) && isset($cfg['tibberBaseFeeMonth']) && is_numeric($cfg['tibberBaseFeeMonth'])) {
+                return (float) $cfg['tibberBaseFeeMonth'];
+            }
+        }
+        return null;
     }
 
     // -----------------------------------------------------------------
@@ -574,156 +645,184 @@ class Szenariorechner extends IPSModule
     // -----------------------------------------------------------------
 
     /**
-     * Simuliert den historischen Lastgang (PV-Erzeugung/Hauslast, stündlich)
-     * mit variabler virtueller Speichergröße und ermittelt den daraus
-     * resultierenden Autarkiegrad sowie die Wirtschaftlichkeit je Größe.
+     * Simuliert den historischen Lastgang (PV-Erzeugung/Hauslast, stündlich) mit variabler
+     * virtueller Speichergröße und ermittelt Autarkiegrad, Eigenverbrauch und Wirtschaftlichkeit
+     * je Größe im Vergleich zur AKTUELLEN Speichergröße.
      *
-     * Vereinfachtes SoC-Modell (Phase 2, bewusst ohne Wirkungsgradverluste):
-     * PV-Überschuss (PV > Last) lädt den virtuellen Speicher bis 100 % SoC,
-     * Fehlbetrag (Last > PV) entlädt ihn bis 0 % SoC, darüber hinaus wird aus
-     * dem Netz bezogen bzw. ins Netz eingespeist. Kein Modell für Lade-/
-     * Entladeleistungsgrenzen — bei sehr kurzen Lastspitzen daher optimistisch.
+     * Vereinfachtes SoC-Modell, bewusst ohne Wirkungsgradverluste und ohne Lade-/Entladeleistungs-
+     * grenzen (bei kurzen Lastspitzen daher optimistisch): PV-Überschuss lädt den Speicher bis
+     * voll, ein Fehlbetrag entlädt ihn bis leer, der Rest kommt aus dem Netz bzw. geht ins Netz.
      *
-     * Rückgabe:
-     *   'contractVersion' => '1.0',
-     *   'periodDays'       => int,
-     *   'periodFrom'/'periodTo' => int (Unix),
-     *   'currentStorageKwh'=> float,  // aktuell konfigurierte Speichergröße (Referenzpunkt)
-     *   'sizes'            => [
-     *       [ 'storageKwh' => float, 'selfSufficiencyPercent' => float,
-     *         'selfConsumptionPercent' => float, 'gridImportKwh' => float,
-     *         'additionalKwhVsCurrent' => float, 'additionalSavingsEurPerYear' => float,
-     *         'paybackYears' => float|null ],
-     *       …
-     *   ],
-     *   'dataComplete'     => bool,
+     * Wirtschaftlichkeit: Eine zusätzlich gespeicherte kWh spart den Bezug (`FestpreisCtKwh`), hätte
+     * aber sonst eingespeist und Einspeisevergütung erhalten. Der Nutzen je verschobener kWh ist also
+     * Bezugspreis MINUS Einspeisevergütung, nicht der volle Bezugspreis. Ist die Vergütung nicht
+     * bekannt, wird sie mit 0 angesetzt (`feedInKnown` = false, Ergebnis dann optimistisch).
+     *
+     * Nur Stunden mit PV- UND Lastwert zählen; fehlende Werte werden NICHT als 0 gerechnet
+     * (`coverage`, `gapDays`, `reason`).
+     *
+     * Rückgabe (contractVersion 1.1, additiv zu 1.0):
+     *   'contractVersion'   => '1.1',
+     *   'periodDays'        => int,
+     *   'periodFrom'/'periodTo' => int (Unix, Kalendertage),
+     *   'currentStorageKwh' => float,   // Referenzpunkt (Quelle siehe Formular)
+     *   'netValueCtKwh'     => float,   // Nutzen je verschobener kWh (Bezugspreis - Vergütung), ct/kWh
+     *   'feedInKnown'       => bool,
+     *   'coverage'          => float,   // Anteil der Stunden mit beiden Werten (0..1)
+     *   'gapDays'           => int,
+     *   'sizes'             => [ [ 'storageKwh', 'selfSufficiencyPercent', 'selfConsumptionPercent',
+     *                              'gridImportKwh', 'additionalKwhVsCurrent',
+     *                              'additionalSavingsEurPerYear', 'paybackYears'|null,
+     *                              'paybackWithinLifetime'|null ], … ],
+     *   'dataComplete'      => bool,    // coverage >= 90 % und keine Archivlücke
+     *   'reason'            => string,  // deutsch, leer wenn vollständig gerechnet
      */
     public function CalculateStorageSizeScenario(int $days): array
     {
+        $current = $this->getSpeicherKwh();
+        $fixedCt = (float) $this->ReadPropertyFloat('FestpreisCtKwh');
+        $feedInCt = $this->getVerguetungCt();
         $result = [
-            'contractVersion'   => '1.0',
+            'contractVersion'   => '1.1',
             'periodDays'        => $days,
             'periodFrom'        => 0,
             'periodTo'          => 0,
-            'currentStorageKwh' => $this->getSpeicherKwh(),
+            'currentStorageKwh' => $current,
+            'netValueCtKwh'     => round($fixedCt - $feedInCt, 2),
+            'feedInKnown'       => $feedInCt > 0.0,
+            'coverage'          => 0.0,
+            'gapDays'           => 0,
             'sizes'             => [],
             'dataComplete'      => false,
+            'reason'            => '',
         ];
-
         if ($days <= 0) {
+            $result['reason'] = 'Zeitraum muss mindestens 1 Tag umfassen';
             return $result;
         }
-
-        $pvVarID = $this->ReadPropertyInteger('PvErzeugungVarID');
-        $lastVarID = $this->ReadPropertyInteger('HausLastVarID');
-        if ($pvVarID <= 0 || $lastVarID <= 0) {
-            $this->SendDebug(__FUNCTION__, 'PV-Erzeugungs-/Hauslastvariable nicht konfiguriert', 0);
+        $avail = $this->scenarioInfo('storageSize');
+        if (!$avail['available']) {
+            $result['reason'] = (string) $avail['reason'];
             return $result;
         }
 
         $end = strtotime('today midnight');
-        $start = $end - ($days * 86400);
+        $start = strtotime("-$days days", $end);
         $result['periodFrom'] = $start;
         $result['periodTo'] = $end;
 
-        $pvKwh = $this->hourlyKwhSeries($pvVarID, false, $start, $end);
-        $lastKwh = $this->hourlyKwhSeries($lastVarID, false, $start, $end);
-        if ($pvKwh === null || $lastKwh === null) {
+        $pv = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('PvErzeugungVarID'), false, $start, $end);
+        $load = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('HausLastVarID'), false, $start, $end);
+        if ($pv === null || $load === null) {
+            $result['reason'] = 'PV-Erzeugungs- oder Hauslastvariable ist ungültig oder nicht archiviert';
+            return $result;
+        }
+        $result['gapDays'] = $pv['gapDays'] + $load['gapDays'];
+
+        $hours = array_values(array_intersect(array_keys($pv['kwh']), array_keys($load['kwh'])));
+        sort($hours);
+        $union = count(array_unique(array_merge(array_keys($pv['kwh']), array_keys($load['kwh']))));
+        $coverage = $union > 0 ? count($hours) / $union : 0.0;
+        $result['coverage'] = round($coverage, 3);
+        if (count($hours) === 0) {
+            $result['reason'] = 'Im Zeitraum liegen keine gemeinsamen PV- und Lastwerte vor';
             return $result;
         }
 
-        $hours = array_unique(array_merge(array_keys($pvKwh), array_keys($lastKwh)));
-        sort($hours);
+        $steps = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0];
+        if ($current > 0.0 && !in_array($current, $steps, true)) {
+            $steps[] = $current;
+            sort($steps);
+        }
 
-        $fixedCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
-        $einspeiseCtKwh = $this->getVerguetungCt();
-        $speicherPreis = $this->ReadPropertyFloat('SpeicherPreisEurKwh');
-
-        $stepsKwh = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0];
-        $currentStorage = $result['currentStorageKwh'];
-        $baselineGridImport = null;
-
-        foreach ($stepsKwh as $storageKwh) {
+        $sim = [];
+        foreach ($steps as $cap) {
             $soc = 0.0;
             $totalLoad = 0.0;
-            $gridImport = 0.0;
+            $totalPv = 0.0;
+            $grid = 0.0;
+            $feedIn = 0.0;
             foreach ($hours as $h) {
-                $pv = $pvKwh[$h] ?? 0.0;
-                $load = $lastKwh[$h] ?? 0.0;
-                $totalLoad += $load;
-                $surplus = $pv - $load;
+                $p = $pv['kwh'][$h];
+                $l = $load['kwh'][$h];
+                $totalPv += $p;
+                $totalLoad += $l;
+                $surplus = $p - $l;
                 if ($surplus >= 0) {
-                    $soc = min($storageKwh, $soc + $surplus);
-                    // Restüberschuss nach vollem Speicher wird eingespeist (hier nicht
-                    // weiter gebraucht, Einspeisung fließt nicht in gridImport ein).
+                    $room = $cap - $soc;
+                    $stored = min($room, $surplus);
+                    $soc += $stored;
+                    $feedIn += $surplus - $stored;
                 } else {
-                    $deficit = -$surplus;
-                    $fromStorage = min($soc, $deficit);
+                    $fromStorage = min($soc, -$surplus);
                     $soc -= $fromStorage;
-                    $gridImport += ($deficit - $fromStorage);
+                    $grid += -$surplus - $fromStorage;
                 }
             }
-
-            if ($baselineGridImport === null && $storageKwh == 0.0) {
-                $baselineGridImport = $gridImport;
-            }
-
-            $selfSufficiency = $totalLoad > 0 ? (1 - $gridImport / $totalLoad) * 100 : 0.0;
-
-            $entry = [
-                'storageKwh'                  => $storageKwh,
-                'selfSufficiencyPercent'       => round($selfSufficiency, 1),
-                'gridImportKwh'                => round($gridImport, 1),
-                'additionalKwhVsCurrent'       => null,
-                'additionalSavingsEurPerYear'  => null,
-                'paybackYears'                 => null,
+            $sim[] = [
+                'cap'  => $cap,
+                'grid' => $grid,
+                'self' => $totalLoad > 0 ? (1 - $grid / $totalLoad) * 100 : 0.0,
+                'own'  => $totalPv > 0 ? (1 - $feedIn / $totalPv) * 100 : 0.0,
             ];
+        }
+
+        // Bezug bei aktueller Größe; nur nutzbar, wenn diese Größe in den Stufen liegt (current > 0
+        // wurde oben ergänzt; bei "nicht angegeben" gibt es keinen Referenzpunkt).
+        $refGrid = null;
+        foreach ($sim as $row) {
+            if ($current > 0.0 && abs($row['cap'] - $current) < 0.01) {
+                $refGrid = $row['grid'];
+            }
+        }
+        $yearFactor = 365.0 / $days;
+        $price = (float) $this->ReadPropertyFloat('SpeicherPreisEurKwh');
+        $life = (int) $this->ReadPropertyInteger('SpeicherAbschreibungJahre');
+        $net = ($fixedCt - $feedInCt) / 100.0;
+
+        $best = 0.0;
+        foreach ($sim as $row) {
+            $entry = [
+                'storageKwh'                  => $row['cap'],
+                'selfSufficiencyPercent'      => round($row['self'], 1),
+                'selfConsumptionPercent'      => round($row['own'], 1),
+                'gridImportKwh'               => round($row['grid'], 1),
+                'additionalKwhVsCurrent'      => null,
+                'additionalSavingsEurPerYear' => null,
+                'paybackYears'                => null,
+                'paybackWithinLifetime'       => null,
+            ];
+            if ($refGrid !== null) {
+                $saved = $refGrid - $row['grid'];
+                $perYear = $saved * $yearFactor * $net;
+                $entry['additionalKwhVsCurrent'] = round($saved, 1);
+                $entry['additionalSavingsEurPerYear'] = round($perYear, 2);
+                $extra = $row['cap'] - $current;
+                if ($extra > 0.01 && $perYear > 0.01 && $price > 0.0) {
+                    $entry['paybackYears'] = round($extra * $price / $perYear, 1);
+                    $entry['paybackWithinLifetime'] = $life > 0 ? $entry['paybackYears'] <= $life : null;
+                }
+                if ($row['cap'] > $current && $perYear > $best) {
+                    $best = $perYear;
+                }
+            }
             $result['sizes'][] = $entry;
         }
 
-        // Zusätzliche Ersparnis je Größe gegenüber der AKTUELL konfigurierten
-        // Speichergröße (currentStorageKwh), nicht gegenüber 0 kWh — die Frage
-        // ist "lohnt sich eine Vergrößerung", nicht "lohnt sich ein Speicher".
-        $currentEntry = null;
-        foreach ($result['sizes'] as $entry) {
-            if (abs($entry['storageKwh'] - $currentStorage) < 0.01) {
-                $currentEntry = $entry;
-                break;
-            }
-        }
-        $currentGridImport = $currentEntry['gridImportKwh'] ?? null;
-
-        if ($currentGridImport !== null && $days > 0) {
-            $yearFactor = 365.0 / $days;
-            foreach ($result['sizes'] as &$entry) {
-                $savedKwh = $currentGridImport - $entry['gridImportKwh'];
-                $entry['additionalKwhVsCurrent'] = round($savedKwh, 1);
-                $savingsPerYear = $savedKwh * $yearFactor * $fixedCtKwh / 100.0;
-                $entry['additionalSavingsEurPerYear'] = round($savingsPerYear, 2);
-
-                $additionalStorageKwh = $entry['storageKwh'] - $currentStorage;
-                if ($additionalStorageKwh > 0.01 && $savingsPerYear > 0.01) {
-                    $invest = $additionalStorageKwh * $speicherPreis;
-                    $entry['paybackYears'] = round($invest / $savingsPerYear, 1);
-                }
-            }
-            unset($entry);
+        $result['dataComplete'] = $coverage >= 0.9 && $result['gapDays'] === 0;
+        if ($refGrid === null) {
+            $result['reason'] = 'Aktuelle Speichergröße nicht angegeben, es gibt keinen Vergleichspunkt für die Zusatzersparnis';
+        } elseif (!$result['dataComplete']) {
+            $result['reason'] = sprintf('Nur %d %% der Stunden mit PV- und Lastwert%s', (int) round($coverage * 100),
+                $result['gapDays'] > 0 ? ', ' . $result['gapDays'] . ' Tag(e) ohne Archivdaten' : '');
+        } elseif (!$result['feedInKnown']) {
+            $result['reason'] = 'Einspeisevergütung nicht angegeben, mit 0 ct gerechnet (Ergebnis optimistisch)';
         }
 
-        $result['dataComplete'] = count($hours) > 0;
-
-        // Kern-Kennzahl für die Ergebnisvariable: die beste gefundene
-        // Zusatzersparnis unter den GRÖSSEREN Stufen als der aktuellen
-        // Speichergröße (0, wenn keine Vergrößerung sich lohnt).
-        $bestAdditionalSavings = 0.0;
-        foreach ($result['sizes'] as $entry) {
-            if ($entry['storageKwh'] > $currentStorage
-                && ($entry['additionalSavingsEurPerYear'] ?? 0.0) > $bestAdditionalSavings) {
-                $bestAdditionalSavings = $entry['additionalSavingsEurPerYear'];
-            }
+        // Kern-Kennzahl nur bei belastbarer Datenlage schreiben, sonst bleibt der letzte gute Wert stehen.
+        if ($refGrid !== null && $result['dataComplete']) {
+            $this->SetValue('StorageSizeAdditionalSavingsEur', round($best, 2));
         }
-        $this->SetValue('StorageSizeAdditionalSavingsEur', $bestAdditionalSavings);
-
         return $result;
     }
 
@@ -763,61 +862,85 @@ class Szenariorechner extends IPSModule
      */
     public function CalculateParagraph14aScenario(): array
     {
-        $ersparnis = $this->ReadPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr');
-        $ereignisse = $this->ReadPropertyInteger('Paragraph14aAnnahmeEreignisseJahr');
-        $dauerMinuten = $this->ReadPropertyInteger('Paragraph14aAnnahmeDauerMinuten');
-        $reduktionKw = $this->ReadPropertyFloat('Paragraph14aAnnahmeReduktionKw');
+        $ersparnis = (float) $this->ReadPropertyFloat('Paragraph14aNetzentgeltErsparnisJahr');
+        $ereignisse = (int) $this->ReadPropertyInteger('Paragraph14aAnnahmeEreignisseJahr');
+        $dauerMinuten = (int) $this->ReadPropertyInteger('Paragraph14aAnnahmeDauerMinuten');
+        $reduktionKw = (float) $this->ReadPropertyFloat('Paragraph14aAnnahmeReduktionKw');
 
-        $referenzTibberJahr = null;
+        $result = [
+            'contractVersion'           => '1.1',
+            'netzentgeltErsparnisJahr'  => round($ersparnis, 2),
+            'referenzTibberJahr'        => null,
+            'angenommeneEreignisseJahr' => $ereignisse,
+            'angenommeneDauerMinuten'   => $dauerMinuten,
+            'angenommeneReduktionKw'    => $reduktionKw,
+            'betroffeneEnergieJahrKwh'  => 0.0,
+            'mittlererPreisCtKwh'       => 0.0,
+            'preisBekannt'              => false,
+            'dimmKostenSchaetzungJahr'  => 0.0,
+            'nettoNutzenJahr'           => 0.0,
+            'dimmCostIsRoughEstimate'   => true,
+            'sbhLiveHistorieVerfuegbar' => false,
+            'reason'                    => '',
+        ];
+        $avail = $this->scenarioInfo('paragraph14a');
+        if (!$avail['available']) {
+            $result['reason'] = (string) $avail['reason'];
+            return $result;
+        }
+
         if (function_exists('TIBBERGR_GetTariffConfig')) {
-            $ids = @IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID);
-            foreach (($ids ?: []) as $iid) {
-                $cfg = @TIBBERGR_GetTariffConfig($iid);
+            foreach ((@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []) as $iid) {
+                try {
+                    $cfg = TIBBERGR_GetTariffConfig($iid);
+                } catch (\Throwable $e) {
+                    $this->LogMessage('TIBBERGR_GetTariffConfig fehlgeschlagen: ' . $e->getMessage(), KL_WARNING);
+                    continue;
+                }
                 if (is_array($cfg) && ($cfg['paragraph14aEnabled'] ?? false)) {
-                    $referenzTibberJahr = (float) ($cfg['paragraph14aReductionYear'] ?? 0.0);
+                    // Nur Vergleichswert, nie Rechengrundlage (die Ersparnis ist netzbetreiberspezifisch).
+                    $result['referenzTibberJahr'] = round((float) ($cfg['paragraph14aReductionYear'] ?? 0.0), 2);
                     break;
                 }
             }
         }
 
-        $betroffeneEnergieJahrKwh = $ereignisse * ($dauerMinuten / 60.0) * $reduktionKw;
-
-        $mittlererPreisCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
-        {
-            $slots = $this->getTibberPriceCurve();
+        // Preisreferenz für die Dimm-Kostenannahme: ausdrücklich angegebener Bezugspreis, sonst
+        // Mittel des dynamischen Tarifs der letzten 30 Kalendertage, sonst unbekannt (kein Ersatzwert).
+        $priceCt = (float) $this->ReadPropertyFloat('FestpreisCtKwh');
+        if ($priceCt <= 0.0) {
+            $end = strtotime('today midnight');
+            $slots = $this->dynamicPriceSlots(strtotime('-30 days', $end), $end);
             if (count($slots) > 0) {
-                $sum = 0.0;
-                $n = 0;
-                foreach ($slots as $slot) {
-                    if (isset($slot['price'])) {
-                        $sum += (float) $slot['price'];
-                        $n++;
-                    }
-                }
-                if ($n > 0) {
-                    $mittlererPreisCtKwh = $sum / $n;
-                }
+                $priceCt = array_sum(array_column($slots, 2)) / count($slots);
             }
         }
+        $energy = $ereignisse * ($dauerMinuten / 60.0) * $reduktionKw;
+        $cost = $priceCt > 0.0 ? $energy * $priceCt / 100.0 : 0.0;
+        $net = round($ersparnis - $cost, 2);
 
-        $dimmKostenSchaetzungJahr = $betroffeneEnergieJahrKwh * $mittlererPreisCtKwh / 100.0;
-        $nettoNutzenJahr = round($ersparnis - $dimmKostenSchaetzungJahr, 2);
-        $this->SetValue('Paragraph14aNetBenefitEur', $nettoNutzenJahr);
+        $result['betroffeneEnergieJahrKwh'] = round($energy, 1);
+        $result['mittlererPreisCtKwh'] = round($priceCt, 2);
+        $result['preisBekannt'] = $priceCt > 0.0;
+        $result['dimmKostenSchaetzungJahr'] = round($cost, 2);
+        $result['nettoNutzenJahr'] = $net;
+        if ($priceCt <= 0.0) {
+            $result['reason'] = 'Kein Bezugspreis bekannt, die Dimm-Kosten sind mit 0 angesetzt (Ergebnis optimistisch)';
+        } else {
+            $this->SetValue('Paragraph14aNetBenefitEur', $net);
+        }
+        return $result;
+    }
 
-        return [
-            'contractVersion'           => '1.0',
-            'netzentgeltErsparnisJahr'  => round($ersparnis, 2),
-            'referenzTibberJahr'        => $referenzTibberJahr !== null ? round($referenzTibberJahr, 2) : null,
-            'angenommeneEreignisseJahr' => $ereignisse,
-            'angenommeneDauerMinuten'   => $dauerMinuten,
-            'angenommeneReduktionKw'    => $reduktionKw,
-            'betroffeneEnergieJahrKwh'  => round($betroffeneEnergieJahrKwh, 1),
-            'mittlererPreisCtKwh'       => round($mittlererPreisCtKwh, 2),
-            'dimmKostenSchaetzungJahr'  => round($dimmKostenSchaetzungJahr, 2),
-            'nettoNutzenJahr'           => $nettoNutzenJahr,
-            'dimmCostIsRoughEstimate'   => true,
-            'sbhLiveHistorieVerfuegbar' => false,
-        ];
+    /** Verfügbarkeitseintrag eines Szenarios nach Typ (siehe GetAvailableScenarios()). */
+    private function scenarioInfo(string $type): array
+    {
+        foreach ($this->GetAvailableScenarios() as $sc) {
+            if ($sc['type'] === $type) {
+                return $sc;
+            }
+        }
+        return ['type' => $type, 'available' => false, 'reason' => 'unbekanntes Szenario'];
     }
 
     // -----------------------------------------------------------------
@@ -870,11 +993,13 @@ class Szenariorechner extends IPSModule
         $response = @file_get_contents(self::NETZTRANSPARENZ_TOKEN_URL, false, $context);
         if ($response === false) {
             $this->SendDebug(__FUNCTION__, 'Token-Anfrage fehlgeschlagen (kein Response)', 0);
+            $this->LogMessage('Netztransparenz: Token-Anfrage ohne Antwort', KL_WARNING);
             return null;
         }
         $data = json_decode($response, true);
         if (!is_array($data) || !isset($data['access_token'])) {
             $this->SendDebug(__FUNCTION__, 'Token-Antwort ohne access_token: ' . $response, 0);
+            $this->LogMessage('Netztransparenz: Token-Antwort ohne access_token', KL_WARNING);
             return null;
         }
 
@@ -927,11 +1052,13 @@ class Szenariorechner extends IPSModule
         if ($response === false) {
             $errorOut = "keine Antwort (HTTP $statusCode, $url)";
             $this->SendDebug(__FUNCTION__, $errorOut, 0);
+            $this->LogMessage('Netztransparenz: ' . $errorOut, KL_WARNING);
             return null;
         }
         if ($statusCode >= 400) {
             $errorOut = "HTTP $statusCode von $url" . ($response !== '' ? (': ' . substr($response, 0, 200)) : '');
             $this->SendDebug(__FUNCTION__, $errorOut, 0);
+            $this->LogMessage('Netztransparenz: ' . $errorOut, KL_WARNING);
             return null;
         }
         if (trim($response) === '') {
@@ -1009,12 +1136,18 @@ class Szenariorechner extends IPSModule
     // -----------------------------------------------------------------
 
     /**
-     * Liefert kWh je Stunde (Unix-Stundenbeginn => kWh) für eine Archiv-Variable
-     * im Zeitraum [$start, $end). $isCounter = true: Avg ist bereits der
-     * Periodenverbrauch (kWh). $isCounter = false: Avg ist mittlere Leistung
-     * (W), wird auf kWh der Stunde umgerechnet. Rückgabe null bei fehlendem
-     * Archiv oder fehlenden Daten (Aufrufer bricht dann ab, statt mit einer
-     * leeren/irreführenden Rechnung fortzufahren).
+     * Liefert kWh je Stunde (Unix-Stundenbeginn => kWh) für eine Archiv-Variable im
+     * Zeitraum [$start, $end). $isCounter = true: Avg ist bereits der Periodenverbrauch
+     * (kWh). $isCounter = false: Avg ist mittlere Leistung (W), wird auf kWh der Stunde
+     * umgerechnet.
+     *
+     * Tageweise abgefragt (SUITE.md 9g: AC_* bricht bei > ~50 000 Werten ab und liefert
+     * dann `false`) und mit Kalendertagen statt fester 86400 Sekunden (Stolperstein 18,
+     * Zeitumstellung). `false` heißt Fehler, nie "keine Daten": der Tag wird geloggt und
+     * als Lücke gezählt. Rückgabe ['kwh' => [Stunde => kWh], 'gapDays' => int] oder null
+     * bei fehlendem Archiv/ungültiger Variable.
+     *
+     * @return array{kwh: array<int,float>, gapDays: int}|null
      */
     private function hourlyKwhSeries(int $varID, bool $isCounter, int $start, int $end): ?array
     {
@@ -1027,43 +1160,22 @@ class Szenariorechner extends IPSModule
             $this->SendDebug(__FUNCTION__, "Variable $varID ist nicht archiviert", 0);
             return null;
         }
-        $rows = AC_GetAggregatedValues($archiveID, $varID, 0 /* stündlich */, $start, $end, 0);
-        if (!is_array($rows) || count($rows) === 0) {
-            $this->SendDebug(__FUNCTION__, 'Keine Archivdaten im Zeitraum', 0);
-            return null;
-        }
-        $hourlyKwh = [];
-        foreach ($rows as $row) {
-            $hourStart = (int) $row['TimeStamp'];
-            $avg = (float) $row['Avg'];
-            $hourlyKwh[$hourStart] = $isCounter ? $avg : ($avg / 1000.0);
-        }
-        return $hourlyKwh;
-    }
-
-    /**
-     * Preiskurve der ersten TibberGridRewards-Instanz, die eine liefert.
-     * TIBBERGR_GetPriceCurve verlangt die Instanz-ID (Vertrag: `(int $id): array`) —
-     * ein Aufruf ohne Argument ist in PHP 8 ein Fatal Error, den `@` nicht abfängt.
-     * Rückgabe: ['id' => Instanz (0 = keine mit Preisen), 'slots' => Liste].
-     */
-    private function findTibberPriceCurve(): array
-    {
-        if (!function_exists('TIBBERGR_GetPriceCurve')) {
-            return ['id' => 0, 'slots' => []];
-        }
-        foreach ((@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []) as $iid) {
-            $slots = @TIBBERGR_GetPriceCurve($iid);
-            if (is_array($slots) && count($slots) > 0) {
-                return ['id' => (int) $iid, 'slots' => $slots];
+        $hourly = [];
+        $gapDays = 0;
+        for ($d = $start; $d < $end; $d = strtotime('+1 day', $d)) {
+            $dEnd = min($end, strtotime('+1 day', $d));
+            $rows = AC_GetAggregatedValues($archiveID, $varID, 0 /* stündlich */, $d, $dEnd, 0);
+            if (!is_array($rows)) {
+                $this->LogMessage('Archivabfrage für Variable ' . $varID . ' am ' . date('d.m.Y', $d) . ' fehlgeschlagen', KL_WARNING);
+                $gapDays++;
+                continue;
+            }
+            foreach ($rows as $row) {
+                $avg = (float) $row['Avg'];
+                $hourly[(int) $row['TimeStamp']] = $isCounter ? $avg : ($avg / 1000.0);
             }
         }
-        return ['id' => 0, 'slots' => []];
-    }
-
-    private function getTibberPriceCurve(): array
-    {
-        return $this->findTibberPriceCurve()['slots'];
+        return ['kwh' => $hourly, 'gapDays' => $gapDays];
     }
 
     private function getArchiveID(int $varID): int
@@ -1094,6 +1206,113 @@ class Szenariorechner extends IPSModule
     /** @var array Verbindungszustand zu EMS: state ok|none|multiple|contract, id, ids, contract. */
     private $plantInfoConn = ['state' => 'none', 'id' => 0, 'ids' => [], 'contract' => ''];
 
+    /**
+     * Welche EMS-Instanz gilt? Ausdrückliche Wahl gewinnt; sonst automatisch nur bei
+     * genau EINER Instanz, bei mehreren wird nicht geraten.
+     *
+     * @return array{state: string, ids: array, candidates: array} state: ok|none|multiple
+     */
+    private function emsCandidates(): array
+    {
+        $ids = array_values(@IPS_GetInstanceListByModuleID(self::EMS_MODULE_GUID) ?: []);
+        if (count($ids) === 0) {
+            return ['state' => 'none', 'ids' => [], 'candidates' => []];
+        }
+        $selected = (int) $this->ReadPropertyInteger('EmsInstanceID');
+        if ($selected > 0 && in_array($selected, $ids, true)) {
+            return ['state' => 'ok', 'ids' => $ids, 'candidates' => [$selected]];
+        }
+        if (count($ids) > 1) {
+            return ['state' => 'multiple', 'ids' => $ids, 'candidates' => []];
+        }
+        return ['state' => 'ok', 'ids' => $ids, 'candidates' => $ids];
+    }
+
+    // -----------------------------------------------------------------
+    //  Preisverlauf der Vergangenheit (dynamischer Tarif)
+    // -----------------------------------------------------------------
+    // TIBBERGR_GetPriceCurve liefert nur heute und morgen — für einen Rückblick über
+    // Wochen taugt es nicht. Den tatsächlichen Verlauf des Bezugstarifs führt EMS
+    // (`EMS_GetPurchasePriceHistory`, Vertrag `purchaseprice` 1.0: je Viertelstunde
+    // `priceCt` in ct/kWh BRUTTO, `quelle` tibber/tibber-archiv/variable/fest, null =
+    // unbekannt). Nur Slots mit `quelle` tibber* zählen als echter dynamischer Preis;
+    // ein Festpreis aus dieser Quelle sagt nichts über einen dynamischen Vertrag.
+
+    /** @var array|null Request-lokaler Cache der Prüfung der Preisquelle. */
+    private $priceSourceCache = null;
+
+    /**
+     * Liefert ['ok' => bool, 'reason' => string, 'emsId' => int]. `ok` heißt: EMS ist
+     * eindeutig gefunden, spricht Vertragsmajor 1 und hat den Bezugstarif „Tibber“.
+     */
+    private function dynamicPriceSource(): array
+    {
+        if ($this->priceSourceCache !== null) {
+            return $this->priceSourceCache;
+        }
+        $fail = fn(string $r, string $level = 'info') => ['ok' => false, 'reason' => $r, 'emsId' => 0, 'level' => $level];
+        if (!function_exists('EMS_GetPurchasePriceHistory')) {
+            return $this->priceSourceCache = $fail('Preisverlauf fehlt: EMS nicht gefunden (er liefert den Verlauf des Bezugstarifs „Tibber“)');
+        }
+        $ems = $this->emsCandidates();
+        if ($ems['state'] === 'none') {
+            return $this->priceSourceCache = $fail('Preisverlauf fehlt: keine EMS-Instanz angelegt');
+        }
+        if ($ems['state'] === 'multiple') {
+            return $this->priceSourceCache = $fail('Preisverlauf: mehrere EMS-Instanzen, bitte im Bereich „Anlagendaten“ eine auswählen', 'warn');
+        }
+        $id = $ems['candidates'][0];
+        $now = time();
+        try {
+            $r = EMS_GetPurchasePriceHistory($id, $now - 3600, $now);
+        } catch (\Throwable $e) {
+            $this->LogMessage('EMS_GetPurchasePriceHistory fehlgeschlagen: ' . $e->getMessage(), KL_WARNING);
+            return $this->priceSourceCache = $fail('Preisverlauf: EMS antwortet nicht (Vertrag „purchaseprice“)', 'warn');
+        }
+        if (!is_array($r) || !str_starts_with((string) ($r['contractVersion'] ?? '1.0'), '1.')) {
+            return $this->priceSourceCache = $fail('Preisverlauf: EMS liefert einen anderen Vertrag (purchaseprice ' . (is_array($r) ? (string) ($r['contractVersion'] ?? '?') : '?') . ', benötigt 1.x) — EMS oder dieses Modul aktualisieren', 'warn');
+        }
+        if (($r['einheit'] ?? '') !== 'ct/kWh brutto') {
+            return $this->priceSourceCache = $fail('Preisverlauf: EMS liefert Preise in „' . (string) ($r['einheit'] ?? '?') . '“, erwartet ct/kWh brutto', 'warn');
+        }
+        $tarif = (string) ($r['tarifart'] ?? '');
+        if ($tarif !== 'tibber') {
+            return $this->priceSourceCache = $fail('Preisverlauf fehlt: der EMS-Bezugstarif ist „' . $tarif . '“, ein Verlauf eines dynamischen Tarifs liegt nur bei „Tibber“ vor');
+        }
+        return $this->priceSourceCache = ['ok' => true, 'reason' => '', 'emsId' => $id, 'level' => 'ok'];
+    }
+
+    /**
+     * Echte dynamische Preise [start, end, ct/kWh brutto] im Zeitraum. Ein Aufruf liefert
+     * höchstens 62 Tage, längere Zeiträume werden gestückelt. Lücken (null) fehlen.
+     */
+    private function dynamicPriceSlots(int $from, int $to): array
+    {
+        $src = $this->dynamicPriceSource();
+        if (!$src['ok'] || !function_exists('EMS_GetPurchasePriceHistory')) {
+            return [];
+        }
+        $out = [];
+        for ($a = $from; $a < $to; $a = $a + 62 * 86400) {
+            try {
+                $r = EMS_GetPurchasePriceHistory($src['emsId'], $a, min($to, $a + 62 * 86400));
+            } catch (\Throwable $e) {
+                $this->LogMessage('EMS_GetPurchasePriceHistory fehlgeschlagen: ' . $e->getMessage(), KL_WARNING);
+                continue;
+            }
+            foreach ((array) ($r['slots'] ?? []) as $slot) {
+                if (!is_array($slot) || !isset($slot['priceCt']) || !is_numeric($slot['priceCt'])) {
+                    continue;
+                }
+                if (!str_starts_with((string) ($slot['quelle'] ?? ''), 'tibber')) {
+                    continue;
+                }
+                $out[] = [(int) $slot['start'], (int) $slot['end'], (float) $slot['priceCt']];
+            }
+        }
+        return $out;
+    }
+
     private function getPlantInfo(): ?array
     {
         if ($this->plantInfoCache !== null) {
@@ -1104,24 +1323,26 @@ class Szenariorechner extends IPSModule
         if (!function_exists('EMS_GetPlantInfo')) {
             return null;
         }
-        $ids = array_values(@IPS_GetInstanceListByModuleID(self::EMS_MODULE_GUID) ?: []);
+        $sel = $this->emsCandidates();
+        $ids = $sel['ids'];
         $this->plantInfoConn['ids'] = $ids;
-        if (count($ids) === 0) {
+        if ($sel['state'] === 'none') {
             return null;
         }
-        // Ausdrückliche Wahl gewinnt; sonst nur bei genau EINER Instanz automatisch —
-        // bei mehreren wird nicht geraten (Verbund-Konvention Verbindungsstatus).
-        $selected = $this->ReadPropertyInteger('EmsInstanceID');
-        if ($selected > 0 && in_array($selected, $ids, true)) {
-            $candidates = [$selected];
-        } elseif (count($ids) > 1) {
+        if ($sel['state'] === 'multiple') {
             $this->plantInfoConn['state'] = 'multiple';
             return null;
-        } else {
-            $candidates = $ids;
         }
+        $candidates = $sel['candidates'];
         foreach ($candidates as $id) {
-            $info = @EMS_GetPlantInfo($id);
+            // try/catch statt @: ein Vertragsbruch beim Partner (z. B. ArgumentCountError) darf
+            // nie das Formular oder den Zyklus töten (SUITE.md Stolperstein 8).
+            try {
+                $info = EMS_GetPlantInfo($id);
+            } catch (\Throwable $e) {
+                $this->LogMessage('EMS_GetPlantInfo fehlgeschlagen: ' . $e->getMessage(), KL_WARNING);
+                continue;
+            }
             if (!is_array($info)) {
                 continue;
             }
@@ -1430,28 +1651,26 @@ class Szenariorechner extends IPSModule
     }
 
     /**
-     * Statuszeile der Tibber-Preisquelle (Dynamischer Vertrag, §14a-Preisannahme).
+     * Statuszeile der Preisquelle für den Rückblick des dynamischen Tarifs (Verbund-Konvention
+     * "Verbindungen im Formular sichtbar machen"): zeigt, woher der Preisverlauf kommt und wie
+     * viel davon vorliegt, oder was fehlt und was dann gilt.
      */
-    private function buildTibberStatusCaption(): string
+    private function buildPriceSourceStatusCaption(): string
     {
-        if (!function_exists('TIBBERGR_GetPriceCurve')) {
-            return 'ℹ️ TibberGridRewards nicht gefunden — das Szenario „Dynamischer Vertrag“ ist nicht verfügbar, das §14a-Szenario rechnet mit dem Festpreis.';
+        $src = $this->dynamicPriceSource();
+        if (!$src['ok']) {
+            $icon = $src['level'] === 'warn' ? '⚠️' : 'ℹ️';
+            return "$icon {$src['reason']}. Das Szenario „Dynamischer Vertrag“ ist so nicht verfügbar.";
         }
-        $ids = array_values(@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []);
-        if (count($ids) === 0) {
-            return 'ℹ️ Keine TibberGridRewards-Instanz angelegt — das Szenario „Dynamischer Vertrag“ ist nicht verfügbar, das §14a-Szenario rechnet mit dem Festpreis.';
-        }
-        $cur = $this->findTibberPriceCurve();
-        if ($cur['id'] === 0) {
-            return '⚠️ TibberGridRewards #' . $ids[0] . ' gefunden, liefert aber keine Preiskurve (Zugangsschlüssel und Haus dort prüfen). Es gilt der Festpreis.';
-        }
-        $ende = 0;
-        foreach ($cur['slots'] as $s) {
-            $ende = max($ende, (int) ($s['end'] ?? 0));
-        }
-        $bis = $ende > 0 ? ', bis ' . date('d.m.Y H:i', $ende) : '';
-        $mehr = count($ids) > 1 ? ' (mehrere Instanzen: die erste mit Preisen wird verwendet)' : '';
-        return '✅ Preiskurve von TibberGridRewards #' . $cur['id'] . ': ' . count($cur['slots']) . ' Zeitabschnitte' . $bis . $mehr . '.';
+        $end = time();
+        $n = count($this->dynamicPriceSlots($end - 2 * 86400, $end));
+        $fee = $this->tibberBaseFeeMonth();
+        $feeText = $fee !== null
+            ? 'Grundgebühr des Tarifs aus Tibber übernommen (' . $this->fmtZahl($fee) . ' €/Monat)'
+            : 'Grundgebühr des dynamischen Tarifs unbekannt, wird nicht angesetzt';
+        $name = @IPS_GetName($src['emsId']);
+        return '✅ Preisverlauf von EMS #' . $src['emsId'] . ($name ? " „{$name}“" : '') . ' (Bezugstarif Tibber): '
+            . $n . ' Viertelstunden mit Preis in den letzten 2 Tagen. ' . $feeText . '.';
     }
 
     /**

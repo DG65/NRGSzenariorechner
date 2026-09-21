@@ -15,7 +15,7 @@ $scenario = $argv[1] ?? null;
 
 if ($scenario === null) {
     $fails = 0;
-    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'tibber_ok', 'tibber_leer', 'tibber_keins'] as $sc) {
+    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'preis_ok', 'preis_fest', 'preis_keins'] as $sc) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . $sc, $rc);
         $fails += $rc === 0 ? 0 : 1;
     }
@@ -36,13 +36,18 @@ class IPSModule
     public function ReadAttributeString($n) { return ''; }
     public function ReadAttributeBoolean($n) { return false; }
     public function ReadAttributeInteger($n) { return 0; }
+    public function LogMessage($m, $l) {}
+    public function SetValue($i, $v) {}
+    public function WriteAttributeString($n, $v) {}
 }
-function IPS_GetLibrary($g) { return ['Version' => '0.7.0-beta.1', 'Build' => 15]; }
+const KL_WARNING = 103;
+function IPS_GetLibrary($g) { return ['Version' => '0.8.0-beta.1', 'Build' => 16]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
 $emsIds = [];
 $tibberIds = [];
+$tarif = 'tibber';
 $plant = [
     'contractVersion' => '1.1', 'inbetriebnahme' => '2012-10-24', 'kwp' => 9.18, 'kwpQuelle' => 'prognose',
     'speicherKwh' => 40.0, 'speicherKwhQuelle' => 'wechselrichter', 'verguetungCt' => 18.36,
@@ -59,16 +64,16 @@ switch ($scenario) {
     case 'ems_vertrag': $emsIds = [55472]; $plant['contractVersion'] = '2.0'; break;
     case 'ems_eigen': $emsIds = [55472]; $props['PvKwp'] = 10.0; break;
     case 'ems_einstellung': $emsIds = [55472]; $plant['speicherKwhQuelle'] = 'einstellung'; $plant['speicherKwh'] = 10.0; break;
-    case 'tibber_ok': $tibberIds = [60001]; break;
-    case 'tibber_leer': $tibberIds = [60001]; $tibberSlots = []; break;
-    case 'tibber_keins': break;
+    case 'preis_ok': $emsIds = [55472]; break;
+    case 'preis_fest': $emsIds = [55472]; $tarif = 'fest'; break;
+    case 'preis_keins': break;
 }
 if ($scenario !== 'ems_keins') {
     // EMS-Funktion existiert in allen Szenarien außer "kein EMS installiert".
     eval('function EMS_GetPlantInfo($id) { return $GLOBALS["plant"]; }');
 }
-if ($scenario !== 'tibber_keins') {
-    eval('function TIBBERGR_GetPriceCurve(int $id): array { return $GLOBALS["tibberSlots"]; }');
+if ($scenario !== 'ems_keins' && $scenario !== 'preis_keins') {
+    eval('function EMS_GetPurchasePriceHistory(int $id, int $from, int $to): array { return ["contractVersion" => "1.0", "einheit" => "ct/kWh brutto", "tarifart" => $GLOBALS["tarif"], "slots" => [["start" => $from, "end" => $from + 900, "priceCt" => 25.0, "quelle" => "tibber-archiv"], ["start" => $from + 900, "end" => $from + 1800, "priceCt" => 27.0, "quelle" => "tibber"]]]; }');
 }
 function IPS_GetInstanceListByModuleID($g)
 {
@@ -102,17 +107,17 @@ $form = json_decode((new Szenariorechner())->GetConfigurationForm(), true);
 $check(is_array($form), 'GetConfigurationForm liefert kein JSON');
 $el = $form['elements'];
 
-foreach (['PlantInfoStatusLabel', 'TibberStatusLabel', 'DocVersionLabel', 'NetztransparenzStatusLabel'] as $n) {
+foreach (['PlantInfoStatusLabel', 'PriceSourceStatusLabel', 'DocVersionLabel', 'NetztransparenzStatusLabel'] as $n) {
     $e = findEl($el, $n);
     $check($e !== null, "$n fehlt im Formular");
 }
 $plantLine = findEl($el, 'PlantInfoStatusLabel')['caption'] ?? '';
-$tibLine = findEl($el, 'TibberStatusLabel')['caption'] ?? '';
+$tibLine = findEl($el, 'PriceSourceStatusLabel')['caption'] ?? '';
 $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
-$check(!str_contains($tibLine, 'wird geprüft'), "Tibber: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.7.0'), "Versionszeile nicht ersetzt: $verLine");
+$check(!str_contains($tibLine, 'wird geprüft'), "Preisquelle: statischer Platzhalter steht noch: $tibLine");
+$check(str_contains($verLine, 'Version 0.8.0'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':
@@ -133,14 +138,14 @@ switch ($scenario) {
     case 'ems_vertrag':
         $check(str_starts_with($plantLine, '⚠️') && str_contains($plantLine, '2.0'), "erwartet ⚠️ mit Vertrag 2.0: $plantLine");
         break;
-    case 'tibber_ok':
-        $check(str_starts_with($tibLine, '✅') && str_contains($tibLine, '#60001') && str_contains($tibLine, '2 Zeitabschnitte'), "erwartet ✅ Tibber: $tibLine");
+    case 'preis_ok':
+        $check(str_starts_with($tibLine, '✅') && str_contains($tibLine, 'EMS #55472') && str_contains($tibLine, 'Bezugstarif Tibber'), "erwartet ✅ Preisquelle: $tibLine");
         break;
-    case 'tibber_leer':
-        $check(str_starts_with($tibLine, '⚠️'), "erwartet ⚠️ Tibber: $tibLine");
+    case 'preis_fest':
+        $check(str_starts_with($tibLine, 'ℹ️') && str_contains($tibLine, 'fest'), "erwartet ℹ️ (Bezugstarif fest): $tibLine");
         break;
-    case 'tibber_keins':
-        $check(str_starts_with($tibLine, 'ℹ️'), "erwartet ℹ️ Tibber: $tibLine");
+    case 'preis_keins':
+        $check(str_starts_with($tibLine, 'ℹ️'), "erwartet ℹ️ Preisquelle: $tibLine");
         break;
 }
 
@@ -186,6 +191,38 @@ switch ($scenario) {
     case 'ems_einstellung':
         $check(str_contains($lineOf('SpeicherKwhLine'), 'unbestätigt'), 'EMS-Einstellung muss als unbestätigt erkennbar sein: ' . $lineOf('SpeicherKwhLine'));
         break;
+}
+
+
+// ---- Verbund-Konventionen am ausgelieferten Formular (SUITE.md) --------------------
+$els = $form['elements'];
+$check(($els[0]['name'] ?? '') === 'PurposeIntroPanel' && ($els[0]['expanded'] ?? false) === true, '"Wozu dieses Modul?" muss ganz oben stehen und aufgeklappt sein');
+$check(str_contains($els[1]['caption'] ?? '', 'Neu in Version 0.8'), 'Neu-Panel muss die Versionsnummer in der Caption tragen: ' . ($els[1]['caption'] ?? ''));
+$last = end($els);
+$check(str_contains($last['caption'] ?? '', 'Über dieses Modul') && !isset($last['name']), '"Über dieses Modul" muss ganz unten stehen und darf nicht dismissible sein (kein name)');
+$forum = findEl($els, 'ForumHint');
+$linkOk = false;
+foreach ($forum['items'] ?? [] as $it) {
+    if (($it['link'] ?? null) === true && str_starts_with((string) ($it['onClick'] ?? ''), "echo '")) { $linkOk = true; }
+}
+$check($linkOk, 'Feedback-Hinweis braucht einen Link-Button im Muster onClick=echo …, link=true (nie die URL in link)');
+$check(!str_contains(json_encode($form, JSON_UNESCAPED_UNICODE), 'Link folgt'), 'Hinweis "Link folgt" darf nicht stehen bleiben');
+$codes = array_column($form['status'] ?? [], 'code');
+$check(in_array(102, $codes, true) && in_array(104, $codes, true), 'form.json["status"] muss 102 und 104 beschriften');
+$walk = function (array $items) use (&$walk, $check) {
+    foreach ($items as $it) {
+        if (($it['type'] ?? '') === 'PopupButton') {
+            $c = (string) ($it['caption'] ?? '');
+            $check(substr_count($c, '?') === 1 && str_ends_with($c, '?'), "PopupButton-Caption braucht genau ein Fragezeichen am Ende: $c");
+        }
+        if (isset($it['items'])) { $walk($it['items']); }
+    }
+};
+$walk($els);
+// Keine erfundenen Standardwerte: ohne Angaben darf kein Szenario "verfügbar" sein.
+$sc = (new Szenariorechner())->GetAvailableScenarios();
+foreach ($sc as $one) {
+    $check($one['available'] === false && $one['reason'] !== '', 'Ohne Angaben darf Szenario ' . $one['type'] . ' nicht verfügbar sein und muss einen Grund nennen');
 }
 
 if ($errors) {

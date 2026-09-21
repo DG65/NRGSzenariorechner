@@ -62,15 +62,46 @@ aller Modul-Repos entfernt (`git filter-repo` + Force-Push). Kein
 Fallback-Link mehr — ohne lokalen Zugriff auf Dietmars Maschine ist SUITE.md
 nicht einsehbar.
 
+## Konventionen, die hier gelten (aus SUITE.md, vollständig gelesen 21.09.2026)
+
+- **Formular-Reihenfolge:** 👋 „Wozu dieses Modul?“ (einmalig dismissible, `PurposeIntroGone`) → 🆕 „Neu in
+  Version X.Y“ (Versionsnummer in der Caption, pro Version dismissible) → 📖 Doku & Hilfe (Version dauerhaft) →
+  Fachpanels → Feedback-Hinweis (dismissible; ohne Forum-Thread GitHub-Issues als Ziel) → 🧡 „Über dieses
+  Modul“ (Lizenz/PayPal, **nicht** dismissible, ganz unten). Link-Buttons immer `onClick = echo '<URL>';` +
+  `link: true`, nie die URL in `link`.
+- **Keine erfundenen Standardwerte:** alle Zahlen-Properties stehen auf 0 = „nicht angegeben“; ein Szenario ist
+  erst `available`, wenn seine Angaben da sind, und nennt sonst den Grund. Vor dem Ändern von Standardwerten
+  den Wert an Dietmars Instanz ausdrücklich setzen (sonst ändert sich sein Live-Verhalten).
+- **Jede Verbindung eine Statuszeile** (✅/⚠️/ℹ️/⛔), live in `GetConfigurationForm()`, Elemente **rekursiv**
+  über `setFormElement()` suchen, automatische Werte nie ins Eingabefeld schreiben. Für Felder ohne
+  Automatik-Pfad die ehrliche Zeile („wird derzeit nicht automatisch übernommen“).
+- **Statuscodes:** nur 102 und 104, beide in `form.json["status"]` beschriftet. Ein fehlendes Partnermodul ist
+  kein Fehlerstatus (Regel 9d), die Gründe stehen je Szenario in `GetAvailableScenarios()`.
+- **Fremdaufrufe:** hinter `function_exists()` UND in `try/catch (\Throwable)`, nie `@` (fängt keinen Error,
+  Stolperstein 8/13; genau so entstand der Instanz-Absturz durch `TIBBERGR_GetPriceCurve()` ohne ID).
+  Fehlschläge dauerhaft per `LogMessage()` loggen, nicht nur `SendDebug()`. Eigenständigkeit prüft
+  `.tools/check-standalone.php`.
+- **Rechnen:** Kalendertage statt `+86400` (Stolperstein 18); Archivabfragen tageweise, `false` = Fehler
+  (9g); Datenlücken sind `null`/ausgelassen, nie 0 (Stolperstein 15); Einheiten dokumentieren (16):
+  Preise ct/kWh brutto, Ergebnisse EUR; keine Zahl in die Ergebnisvariable schreiben, wenn die Abdeckung unter
+  90 % liegt.
+- **Preise der Vergangenheit** kommen aus `EMS_GetPurchasePriceHistory` (Bezugstarif „Tibber“, echter
+  Archiv-Verlauf), NICHT aus `TIBBERGR_GetPriceCurve` (nur heute/morgen) und nicht aus
+  `NRGDASH_GetPriceSeries` (dort für die Vergangenheit nur BDEW-Näherung).
+- **Öffentliche `SZR_`-Funktionen ohne PHP-Standardwerte**, alle Parameter typisiert (Stolperstein 8/20).
+- **`module.json`:** `name` = Klassenname (nie ändern), genau **ein** Alias „NRG-Stack Szenariorechner“.
+  `library.json["name"]`: „NRG-Stack Szenariorechner“ ohne Suffix.
+
 ## Prüfstand vor jedem Push
 
 ```
-php .tools/test-form.php    # 0 = grün
+php .tools/check-standalone.php   # Fremdaufrufe abgesichert
+php .tools/test-form.php          # Statuszeilen, Formular-Konventionen (12 Fälle)
+php .tools/test-scenarios.php     # Rechnung, Lücken, Zeitumstellung, Standardwerte
 ```
 
-Prüft nach `GetConfigurationForm()`, dass jede Statuszeile (EMS-Anlagendaten, Tibber-
-Preiskurve, Version, Netztransparenz) im ausgelieferten JSON steht, der statische
-Platzhalter weg ist und der Inhalt zum Zustand passt (✅/⚠️/ℹ️, Wert UND Quelle je Feld).
-Formularelemente werden immer über `setFormElement()` gesetzt, das **rekursiv** über alle
-`items` sucht — nur die oberste Ebene zu durchsuchen ließ Statuszeilen in Panels unverändert
-(Fund 21.09.2026). Neue Verbindung = neue Statuszeile + neuer Fall im Prüfstand.
+`test-form.php` prüft am ausgelieferten JSON, dass jede Statuszeile ankommt (auch in Panels), der
+statische Platzhalter weg ist, die Pflicht-Panels an der richtigen Stelle stehen und ohne Angaben kein
+Szenario „verfügbar“ ist. `test-scenarios.php` rechnet die Szenarien gegen nachgebildetes IPS durch und
+prüft, dass Lücken nichts Erfundenes erzeugen. Beide sind nachweislich rot, wenn die jeweiligen
+Fehler wieder eingebaut werden. Neue Verbindung = neue Statuszeile + neuer Fall; CI: `.github/workflows`.

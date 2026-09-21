@@ -123,41 +123,44 @@ Datumsformat (Verbund-Regel 9b, 13.09.2026): nutzersichtbar **TT.MM.JJJJ**,
 
 ## Szenario-Typen
 
-### 1. Dynamischer Vertrag (Phase 1 — Empfehlung als Start)
+### 1. Dynamischer Vertrag (Phase 1)
 
-**Frage:** Was hätte ein dynamischer Stromvertrag in den letzten N Monaten gegenüber dem
+**Frage:** Was hätte ein dynamischer Stromvertrag in den letzten N Tagen gegenüber dem
 aktuellen Festpreis gekostet/gebracht?
 
-**Rechnung:** Historischer Netzbezug (`AC_GetAggregatedValues` an der MeterHub-/
-InverterHub-Instanz, 15-Minuten-Summierung wie in `ips-counter-aggregation` dokumentiert)
-× viertelstundenscharfe Preiskurve (`TIBBERGR_GetPriceCurve`, rückwirkend soweit im Cache/
-Archiv vorhanden) vs. × aktueller Festpreis (Nutzereingabe ct/kWh). Differenz = Ersparnis/
-Mehrkosten. Optional: Einspeisung ebenfalls mit dynamischem Vermarktungspreis statt fixer
-Einspeisevergütung gegenrechnen (zeigt zugleich Wirkung von Batteriespeicher-Verschiebung
-NICHT — das ist Szenario 2, hier nur Tarifvergleich bei unverändertem Verhalten).
+**Rechnung:** Historischer Netzbezug (`AC_GetAggregatedValues`, stündlich, tageweise abgefragt) bewertet
+einmal mit dem Festpreis (Nutzereingabe, ct/kWh brutto) und einmal mit dem **tatsächlichen Preisverlauf des
+dynamischen Tarifs** aus `EMS_GetPurchasePriceHistory` (Bezugstarif „Tibber“, ct/kWh brutto je Viertelstunde,
+zu Stundenmitteln). Verglichen wird nur über Stunden mit Preis (`coverage`); fehlende Preise werden nicht
+mit einem Ersatzwert gefüllt. Grundgebühr des dynamischen Tarifs aus `TIBBERGR_GetTariffConfig`, falls
+bekannt (sonst nicht angesetzt, `dynamicBaseFeeKnown`).
 
-**Eingaben:** aktueller Festpreis (ct/kWh), Grundpreis (€/Monat), Analysezeitraum.
-**Automatisch gezogen:** Lastgang, Preiskurve.
-**Einfachheit:** hoch — beide Datenquellen (Archive Control, Tibber) sind bereits im
-Verbund vorhanden und liefern exakt das Nötige. Kein externer API-Zugang nötig.
+**Korrektur 21.09.2026:** Die erste Fassung holte die Preise über `TIBBERGR_GetPriceCurve`. Das liefert nur
+heute und morgen, der 30-Tage-Rückblick rechnete daher praktisch nichts (übrige Stunden wurden mit dem
+Festpreis „aufgefüllt“, Ersparnis ≈ 0). `NRGDASH_GetPriceSeries` scheidet ebenfalls aus (Vergangenheit nur als
+BDEW-Näherung).
+
+**Offen (Entwurfsfrage):** Ein Nutzer OHNE Tibber (das Kernpublikum für „lohnt sich ein dynamischer
+Vertrag?“) hat keinen Verlauf. Denkbar: Börsenpreis-Modul (`SPOT_GetPriceHistory`, netto) plus ein
+Aufschlagsmodell (Beschaffung, Netzentgelt, Steuern/Umlagen, MwSt) analog Tibber-`components`. Braucht eine
+Entscheidung, ob der Szenariorechner ein Aufschlagsmodell selbst führt oder das Börsenpreis-Modul es liefert.
+
+**Eingaben:** Festpreis (ct/kWh brutto), Grundpreis (€/Monat), Netzbezugsvariable.
+**Automatisch:** Preisverlauf und ggf. Grundgebühr des dynamischen Tarifs.
 
 ### 2. Speichergröße
 
-**Frage:** Welche Speichergröße wäre wirtschaftlich sinnvoll (Grenznutzen sinkender
-Autarkiegewinn je zusätzlicher kWh)?
+**Frage:** Lohnt eine größere Batterie, und ab welcher Größe sinkt der Grenznutzen?
 
-**Rechnung:** Simulation des historischen Lastgangs (Verbrauch, PV-Erzeugung) mit
-variabler virtueller Speichergröße (0…80 kWh in Schritten) nach einfachem
-Ladezustands-Modell (Überschuss lädt, Defizit entlädt, Grenzen SoC 0–100 %, kein
-Wirkungsgradmodell in Phase 1 — vereinfachend, später verfeinerbar) → Autarkiegrad/
-Eigenverbrauchsquote je Größe → Grenznutzenkurve. Wirtschaftlichkeit: eingesparter
-Netzbezug × Strompreis vs. Anschaffungskosten (Nutzereingabe €/kWh Speicher) über
-Abschreibungsdauer.
-**Eingaben:** Speicherpreis (€/kWh), Abschreibungsdauer, evtl. bereits vorhandene 40 kWh
-als Startpunkt (Vergrößerung vs. Neuanschaffung).
-**Automatisch gezogen:** historischer Lastgang + PV-Erzeugung.
-**Komplexität:** mittel — braucht ein eigenes (einfaches) Simulationsmodell, keine
-externen Datenquellen zusätzlich.
+**Rechnung:** Simulation von Erzeugung und Hauslast (stündlich, nur Stunden mit BEIDEN Werten) mit gestuften
+virtuellen Speichergrößen (Überschuss lädt, Defizit entlädt). Nutzen je zusätzlich verschobener kWh =
+**Bezugspreis minus Einspeisevergütung** (die verschobene kWh hätte sonst Vergütung erhalten; die erste Fassung
+setzte den vollen Bezugspreis an und überschätzte die Ersparnis erheblich). Fehlt die Vergütung, wird mit 0 ct
+gerechnet und das Ergebnis als optimistisch gekennzeichnet. Amortisation gegenüber der AKTUELLEN Größe.
+Kein Wirkungsgradmodell, keine Leistungsgrenzen (optimistisch).
+
+**Eingaben:** Speicherpreis, Nutzungsdauer, Bezugspreis (Festpreis), Erzeugungs- und Lastvariable.
+**Automatisch:** aktuelle Speichergröße und Einspeisevergütung aus `EMS_GetPlantInfo`.
 
 ### 3. §14a-Beitritt
 
@@ -220,7 +223,7 @@ Festlegung des exakten Rückgabeformats, damit das Dashboard es direkt konsumier
 (gleiche Kopplung wie EMS↔Hubs: Rechner liefert Daten, Dashboard stellt dar, kein
 Rollentausch).
 
-**Ergänzt 27.07.2026 (Rückmeldung Dietmar):** Ohne jede eigene Variable war auf der
+**Ergänzt 27.07.2026 (Rückmeldung Dietmar); seit 0.8.0 schreiben die Kennzahlen nur bei mindestens 90 % Datenabdeckung:** Ohne jede eigene Variable war auf der
 Instanz selbst nichts sichtbar — Nutzerbestätigung: vier Kern-Ergebnisvariablen
 (`NetztransparenzStatus`, `DynamicTariffSavingsEur`, `StorageSizeAdditionalSavingsEur`,
 `Paragraph14aNetBenefitEur`) ergänzt, je eine Kennzahl pro Szenario, kein vollständiges
