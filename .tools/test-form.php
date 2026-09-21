@@ -41,7 +41,7 @@ class IPSModule
     public function WriteAttributeString($n, $v) {}
 }
 const KL_WARNING = 103;
-function IPS_GetLibrary($g) { return ['Version' => '0.8.0-beta.1', 'Build' => 16]; }
+function IPS_GetLibrary($g) { return ['Version' => '0.8.1-beta.1', 'Build' => 17]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
@@ -117,7 +117,7 @@ $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
 $check(!str_contains($tibLine, 'wird geprüft'), "Preisquelle: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.8.0'), "Versionszeile nicht ersetzt: $verLine");
+$check(str_contains($verLine, 'Version 0.8.1'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':
@@ -153,10 +153,14 @@ switch ($scenario) {
 // ---- Eingabefelder: Zeile + Sichtbarkeit je Zustand -----------------------------
 $lineOf = fn(string $n) => findEl($el, $n)['caption'] ?? '';
 $visOf = fn(string $n) => findEl($el, $n)['visible'] ?? null;
+$colOf = fn(string $n) => findEl($el, $n)['color'] ?? null;
 $inputs = ['PvKwp' => 'PvKwpLine', 'WrKw' => 'WrKwLine', 'SpeicherKwh' => 'SpeicherKwhLine', 'EinspeiseverguetungCtKwh' => 'VerguetungLine', 'InbetriebnahmeDatum' => 'InbetriebnahmeLine'];
 foreach ($inputs as $in => $ln) {
     $check(findEl($el, $in) !== null && findEl($el, $ln) !== null, "$in/$ln fehlt im Formular");
     $check(!str_contains($lineOf($ln), '…'), "$ln: Platzhalter steht noch");
+    // Farbe je Zustand: nur 🔗 grün (0x2E8B3D), sonst Standardfarbe -1.
+    $auto = str_starts_with($lineOf($ln), '🔗');
+    $check($colOf($ln) === ($auto ? 0x2E8B3D : -1), "$ln: Farbe " . var_export($colOf($ln), true) . ($auto ? ' statt grün' : ' statt Standard (-1)'));
     // Der automatische Wert darf nie ins Eingabefeld geschrieben werden (sonst würde "Übernehmen" ihn speichern).
     $check(!array_key_exists('value', findEl($el, $in) ?? []), "$in: enthält 'value' - automatischer Wert im Eingabefeld");
 }

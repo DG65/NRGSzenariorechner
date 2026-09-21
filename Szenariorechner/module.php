@@ -138,7 +138,7 @@ class Szenariorechner extends IPSModule
         // Je Anlagenwert: Zeile mit Wert und Quelle, Eingabefeld nur wenn nichts automatisch kommt.
         $anyHidden = false;
         foreach ($this->buildPlantFieldRows() as $field => $row) {
-            $this->setFormElement($form['elements'], $row['lineName'], ['caption' => $row['line']]);
+            $this->setFormElement($form['elements'], $row['lineName'], ['caption' => $row['line'], 'color' => $row['color']]);
             $this->setFormElement($form['elements'], $field, ['visible' => $row['visible']]);
             $anyHidden = $anyHidden || !$row['visible'];
         }
@@ -1520,6 +1520,9 @@ class Szenariorechner extends IPSModule
         return $info['pflichten'] ?? [];
     }
 
+    /** Grün für automatisch übernommene Werte (Verbund-Konvention, EMS_COLOR_AUTO); -1 = Standardfarbe. */
+    private const COLOR_AUTO = 0x2E8B3D;
+
     private const EIGENE_FELDER = ['PvKwp', 'WrKw', 'SpeicherKwh', 'EinspeiseverguetungCtKwh', 'InbetriebnahmeDatum'];
 
     /**
@@ -1530,7 +1533,7 @@ class Szenariorechner extends IPSModule
      * Eingabefeld geschrieben — sonst würde ein Klick auf "Übernehmen" ihn als eigene
      * Angabe speichern und das Modul folgte EMS nicht mehr.
      *
-     * @return array<string, array{line: string, lineName: string, visible: bool}> je Eingabefeld
+     * @return array<string, array{line: string, lineName: string, visible: bool, color: int}> je Eingabefeld
      */
     private function buildPlantFieldRows(): array
     {
@@ -1549,7 +1552,7 @@ class Szenariorechner extends IPSModule
                 default:
                     $line = "ℹ️ $label: nicht angegeben — $noneHint";
             }
-            $rows[$field] = ['line' => $line, 'lineName' => $lineName, 'visible' => $kind !== 'auto'];
+            $rows[$field] = ['line' => $line, 'lineName' => $lineName, 'visible' => $kind !== 'auto', 'color' => $kind === 'auto' ? self::COLOR_AUTO : -1];
         };
 
         $r = $this->resolveKwp();
