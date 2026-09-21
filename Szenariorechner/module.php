@@ -28,6 +28,7 @@ class Szenariorechner extends IPSModule
     // EMS führt die Anlagenstammdaten jetzt zentral (EMS 0.34.0, Vertrag
     // 'plantinfo' 1.0) — Modul-GUID der Zielinstanz, nicht per Präfix raten.
     private const EMS_MODULE_GUID = '{31C61A7B-28C4-4F97-9651-1A64B3469E3C}';
+    private const TIBBER_MODULE_GUID = '{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}';
 
     public function Create()
     {
@@ -39,6 +40,7 @@ class Szenariorechner extends IPSModule
         // Standardwerte bewusst "nicht angegeben" statt Dietmars eigener
         // Anlage (Verbund-Regel "keine eigene Anlage als Norm", Rückmeldung
         // EMS-Koordination 13.09.2026).
+        $this->RegisterPropertyInteger('EmsInstanceID', 0);
         $this->RegisterPropertyFloat('PvKwp', 0.0);
         $this->RegisterPropertyFloat('WrKw', 0.0);
         $this->RegisterPropertyFloat('SpeicherKwh', 0.0);
@@ -124,37 +126,39 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setElementVisible($form, 'ChangelogPanel', $this->ReadAttributeString('ChangelogSeen') !== '0.5');
-        $this->setElementVisible($form, 'ForumHint', !$this->ReadAttributeBoolean('ForumHintGone'));
-        $this->injectVersionLabel($form);
-        $this->injectNetztransparenzStatus($form);
-        $this->injectPlantInfoStatus($form);
+        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.6']);
+        $this->setFormElement($form['elements'], 'ForumHint', ['visible' => !$this->ReadAttributeBoolean('ForumHintGone')]);
+        $this->setFormElement($form['elements'], 'DocVersionLabel', ['caption' => $this->buildVersionCaption()]);
+        $this->setFormElement($form['elements'], 'NetztransparenzStatusLabel', ['caption' => $this->buildNetztransparenzStatusCaption()]);
+        $this->setFormElement($form['elements'], 'PlantInfoStatusLabel', ['caption' => $this->buildPlantInfoStatusCaption()]);
+        $this->setFormElement($form['elements'], 'TibberStatusLabel', ['caption' => $this->buildTibberStatusCaption()]);
 
         return json_encode($form);
     }
 
-    private function injectPlantInfoStatus(array &$form): void
+    /**
+     * Setzt Eigenschaften am benannten Formularelement — sucht REKURSIV über alle
+     * `items` (ExpansionPanel, RowLayout, …). Nur oberste Ebene zu durchsuchen war
+     * der Fehler, durch den Statuszeilen in Panels nie ersetzt wurden (21.09.2026).
+     * Rückgabe true, wenn das Element gefunden wurde.
+     */
+    private function setFormElement(array &$items, string $name, array $props): bool
     {
-        $info = $this->getPlantInfo();
-        if ($info === null) {
-            $caption = 'Kein EMS gefunden — es gelten die eigenen Angaben unten (0 = nicht angegeben).';
-        } else {
-            $ibn = ($info['inbetriebnahme'] ?? '') !== ''
-                ? $this->formatAnlageDatum((string) $info['inbetriebnahme'])
-                : 'unbekannt';
-            $kwp = ($info['kwp'] ?? 0.0) > 0.0 ? round((float) $info['kwp'], 2) . ' kWp' : 'unbekannt';
-            $verg = ($info['verguetungQuelle'] ?? 'platzhalter') !== 'platzhalter'
-                ? round((float) ($info['verguetungCt'] ?? 0.0), 2) . ' ct/kWh'
-                : 'unbekannt';
-            $caption = "✅ Anlagendaten von EMS übernommen: Inbetriebnahme $ibn, $kwp, Vergütung $verg.";
-        }
-        foreach ($form['elements'] as &$el) {
-            if (($el['name'] ?? '') === 'PlantInfoStatusLabel') {
-                $el['caption'] = $caption;
-                return;
+        foreach ($items as &$el) {
+            if (!is_array($el)) {
+                continue;
+            }
+            if (($el['name'] ?? '') === $name) {
+                foreach ($props as $k => $v) {
+                    $el[$k] = $v;
+                }
+                return true;
+            }
+            if (isset($el['items']) && is_array($el['items']) && $this->setFormElement($el['items'], $name, $props)) {
+                return true;
             }
         }
-        unset($el);
+        return false;
     }
 
     /**
@@ -325,43 +329,13 @@ class Szenariorechner extends IPSModule
     }
 
     // Versionszeile im Doku-Panel dauerhaft sichtbar (Verbund-Konvention), aus
-    // library.json ermittelt statt fest im Formular verdrahtet.
-    private function injectVersionLabel(array &$form): void
+    // der Bibliothek ermittelt statt fest im Formular verdrahtet.
+    private function buildVersionCaption(): string
     {
         $lib = @IPS_GetLibrary('{9B2E1A3F-6C7D-4E8B-9A1C-2D3E4F5A6B7C}');
-        $verTxt = (is_array($lib) && isset($lib['Version']))
+        return (is_array($lib) && isset($lib['Version']))
             ? 'ℹ️ Szenariorechner Version ' . $lib['Version'] . ' (Build ' . ($lib['Build'] ?? '?') . ')'
             : 'ℹ️ Szenariorechner';
-        foreach ($form['elements'] as &$el) {
-            if (($el['name'] ?? '') === 'DocVersionLabel') {
-                $el['caption'] = $verTxt;
-                return;
-            }
-        }
-        unset($el);
-    }
-
-    private function injectNetztransparenzStatus(array &$form): void
-    {
-        $caption = $this->buildNetztransparenzStatusCaption();
-        foreach ($form['elements'] as &$el) {
-            if (($el['name'] ?? '') === 'NetztransparenzStatusLabel') {
-                $el['caption'] = $caption;
-                return;
-            }
-        }
-        unset($el);
-    }
-
-    private function setElementVisible(array &$form, string $name, bool $visible): void
-    {
-        foreach ($form['elements'] as &$el) {
-            if (($el['name'] ?? '') === $name) {
-                $el['visible'] = $visible;
-                return;
-            }
-        }
-        unset($el);
     }
 
     public function DismissChangelog(string $version)
@@ -784,7 +758,7 @@ class Szenariorechner extends IPSModule
 
         $referenzTibberJahr = null;
         if (function_exists('TIBBERGR_GetTariffConfig')) {
-            $ids = @IPS_GetInstanceListByModuleID('{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}');
+            $ids = @IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID);
             foreach (($ids ?: []) as $iid) {
                 $cfg = @TIBBERGR_GetTariffConfig($iid);
                 if (is_array($cfg) && ($cfg['paragraph14aEnabled'] ?? false)) {
@@ -1059,20 +1033,25 @@ class Szenariorechner extends IPSModule
      * Preiskurve der ersten TibberGridRewards-Instanz, die eine liefert.
      * TIBBERGR_GetPriceCurve verlangt die Instanz-ID (Vertrag: `(int $id): array`) —
      * ein Aufruf ohne Argument ist in PHP 8 ein Fatal Error, den `@` nicht abfängt.
-     * Leere Liste ohne Modul, ohne Instanz oder ohne Preise.
+     * Rückgabe: ['id' => Instanz (0 = keine mit Preisen), 'slots' => Liste].
      */
-    private function getTibberPriceCurve(): array
+    private function findTibberPriceCurve(): array
     {
         if (!function_exists('TIBBERGR_GetPriceCurve')) {
-            return [];
+            return ['id' => 0, 'slots' => []];
         }
-        foreach ((@IPS_GetInstanceListByModuleID('{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}') ?: []) as $iid) {
+        foreach ((@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []) as $iid) {
             $slots = @TIBBERGR_GetPriceCurve($iid);
             if (is_array($slots) && count($slots) > 0) {
-                return $slots;
+                return ['id' => (int) $iid, 'slots' => $slots];
             }
         }
-        return [];
+        return ['id' => 0, 'slots' => []];
+    }
+
+    private function getTibberPriceCurve(): array
+    {
+        return $this->findTibberPriceCurve()['slots'];
     }
 
     private function getArchiveID(int $varID): int
@@ -1100,6 +1079,8 @@ class Szenariorechner extends IPSModule
 
     /** @var array|null Request-lokaler Cache, damit ein Aufruf max. 1x EMS fragt. */
     private $plantInfoCache = null;
+    /** @var array Verbindungszustand zu EMS: state ok|none|multiple|contract, id, ids, contract. */
+    private $plantInfoConn = ['state' => 'none', 'id' => 0, 'ids' => [], 'contract' => ''];
 
     private function getPlantInfo(): ?array
     {
@@ -1107,28 +1088,68 @@ class Szenariorechner extends IPSModule
             return $this->plantInfoCache ?: null;
         }
         $this->plantInfoCache = false;
+        $this->plantInfoConn = ['state' => 'none', 'id' => 0, 'ids' => [], 'contract' => ''];
         if (!function_exists('EMS_GetPlantInfo')) {
             return null;
         }
-        $ids = @IPS_GetInstanceListByModuleID(self::EMS_MODULE_GUID);
-        foreach (($ids ?: []) as $id) {
+        $ids = array_values(@IPS_GetInstanceListByModuleID(self::EMS_MODULE_GUID) ?: []);
+        $this->plantInfoConn['ids'] = $ids;
+        if (count($ids) === 0) {
+            return null;
+        }
+        // Ausdrückliche Wahl gewinnt; sonst nur bei genau EINER Instanz automatisch —
+        // bei mehreren wird nicht geraten (Verbund-Konvention Verbindungsstatus).
+        $selected = $this->ReadPropertyInteger('EmsInstanceID');
+        if ($selected > 0 && in_array($selected, $ids, true)) {
+            $candidates = [$selected];
+        } elseif (count($ids) > 1) {
+            $this->plantInfoConn['state'] = 'multiple';
+            return null;
+        } else {
+            $candidates = $ids;
+        }
+        foreach ($candidates as $id) {
             $info = @EMS_GetPlantInfo($id);
-            if (is_array($info) && str_starts_with((string) ($info['contractVersion'] ?? '1.0'), '1.')) {
+            if (!is_array($info)) {
+                continue;
+            }
+            $ver = (string) ($info['contractVersion'] ?? '1.0');
+            if (str_starts_with($ver, '1.')) {
                 $this->plantInfoCache = $info;
+                $this->plantInfoConn = ['state' => 'ok', 'id' => $id, 'ids' => $ids, 'contract' => $ver];
                 return $info;
             }
+            $this->plantInfoConn = ['state' => 'contract', 'id' => $id, 'ids' => $ids, 'contract' => $ver];
         }
         return null;
     }
 
-    /** kWp: EMS > eigene Property > 0.0 ("nicht angegeben"). */
-    private function getKwp(): float
+    private const QUELLE_TEXT = [
+        'eingetragen'    => 'im EMS eingetragen',
+        'prognose'       => 'PV-Prognose',
+        'wechselrichter' => 'Wechselrichter gemessen',
+        'einstellung'    => 'EMS-Einstellung',
+        'variable'       => 'EMS-Variable',
+        'berechnet'      => 'aus EEG-Tabelle berechnet',
+    ];
+
+    private function quelleText(string $q): string
+    {
+        return self::QUELLE_TEXT[$q] ?? $q;
+    }
+
+    // Auflösung je Wert liefert [Wert, Quelle als Klartext]. get*() und die
+    // Statuszeile nutzen dieselbe Stelle, damit angezeigt wird, was tatsächlich gilt.
+
+    /** @return array{0: float, 1: string} kWp: EMS > eigene Eingabe > nicht angegeben. */
+    private function resolveKwp(): array
     {
         $info = $this->getPlantInfo();
         if ($info !== null && ($info['kwp'] ?? 0.0) > 0.0) {
-            return (float) $info['kwp'];
+            return [(float) $info['kwp'], 'EMS: ' . $this->quelleText((string) ($info['kwpQuelle'] ?? ''))];
         }
-        return $this->ReadPropertyFloat('PvKwp');
+        $own = $this->ReadPropertyFloat('PvKwp');
+        return [$own, $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben'];
     }
 
     /**
@@ -1138,49 +1159,77 @@ class Szenariorechner extends IPSModule
      * vertrauenswürdig und hat Vorrang. 'einstellung' (EMS-Property
      * BAT_Capacity_kWh) kann laut EMS der nie geänderte Standardwert 10 kWh
      * sein — EMS kann eine bewusste Eingabe nicht von diesem Default
-     * unterscheiden. Deshalb bei 'einstellung' die EIGENE Property vorziehen,
-     * wenn sie gesetzt ist (>0 gilt hier als bewusst gepflegt, da unser
-     * Default seit der "keine eigene Anlage als Norm"-Umstellung 0.0 ist,
-     * nicht mehr Dietmars 40 kWh); ist auch unsere Property 0, ist EMS'
-     * 'einstellung'-Wert immer noch besser als gar keiner. 'fehlt' (0) fällt
-     * wie gehabt auf die eigene Property zurück.
+     * unterscheiden. Deshalb bei 'einstellung' die EIGENE Eingabe vorziehen,
+     * wenn sie gesetzt ist; ist auch sie 0, ist der EMS-Wert immer noch besser
+     * als gar keiner. 'fehlt' (0) fällt auf die eigene Eingabe zurück.
+     *
+     * @return array{0: float, 1: string}
      */
-    private function getSpeicherKwh(): float
+    private function resolveSpeicherKwh(): array
     {
         $info = $this->getPlantInfo();
-        $ownValue = $this->ReadPropertyFloat('SpeicherKwh');
+        $own = $this->ReadPropertyFloat('SpeicherKwh');
+        $ownQ = $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben';
         if ($info === null) {
-            return $ownValue;
+            return [$own, $ownQ];
         }
-        $quelle = $info['speicherKwhQuelle'] ?? 'fehlt';
-        $emsValue = (float) ($info['speicherKwh'] ?? 0.0);
-        if ($quelle === 'wechselrichter' && $emsValue > 0.0) {
-            return $emsValue;
+        $quelle = (string) ($info['speicherKwhQuelle'] ?? 'fehlt');
+        $ems = (float) ($info['speicherKwh'] ?? 0.0);
+        if ($quelle === 'wechselrichter' && $ems > 0.0) {
+            return [$ems, 'EMS: ' . $this->quelleText($quelle)];
         }
-        if ($quelle === 'einstellung') {
-            return $ownValue > 0.0 ? $ownValue : $emsValue;
+        if ($quelle === 'einstellung' && $ems > 0.0) {
+            return $own > 0.0
+                ? [$own, 'eigene Eingabe, EMS-Einstellung nicht übernommen']
+                : [$ems, 'EMS: ' . $this->quelleText($quelle) . ', unbestätigt'];
         }
-        return $ownValue;
+        return [$own, $ownQ];
     }
 
-    /** Einspeisevergütung (ct/kWh): EMS > eigene Property > 0.0. */
-    private function getVerguetungCt(): float
+    /** @return array{0: float, 1: string} Einspeisevergütung (ct/kWh): EMS > eigene Eingabe. */
+    private function resolveVerguetungCt(): array
     {
         $info = $this->getPlantInfo();
         if ($info !== null && ($info['verguetungQuelle'] ?? 'platzhalter') !== 'platzhalter') {
-            return (float) ($info['verguetungCt'] ?? 0.0);
+            $q = 'EMS: ' . $this->quelleText((string) $info['verguetungQuelle']);
+            if (($info['verguetungQuelle'] ?? '') === 'berechnet' && !empty($info['verguetungGeprueft'])) {
+                $q .= ', geprüft';
+            }
+            return [(float) ($info['verguetungCt'] ?? 0.0), $q];
         }
-        return $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
+        $own = $this->ReadPropertyFloat('EinspeiseverguetungCtKwh');
+        return [$own, $own > 0.0 ? 'eigene Eingabe' : 'nicht angegeben'];
     }
 
-    /** Inbetriebnahme als ISO-Datum (JJJJ-MM-TT), leer wenn unbekannt. */
-    private function getInbetriebnahmeIso(): string
+    /** @return array{0: string, 1: string} Inbetriebnahme als ISO-Datum (leer = unbekannt). */
+    private function resolveInbetriebnahme(): array
     {
         $info = $this->getPlantInfo();
         if ($info !== null && ($info['inbetriebnahme'] ?? '') !== '') {
-            return (string) $info['inbetriebnahme'];
+            return [(string) $info['inbetriebnahme'], 'EMS'];
         }
-        return $this->parseAnlageDatum($this->ReadPropertyString('InbetriebnahmeDatum')) ?? '';
+        $own = $this->parseAnlageDatum($this->ReadPropertyString('InbetriebnahmeDatum')) ?? '';
+        return [$own, $own !== '' ? 'eigene Eingabe' : 'nicht angegeben'];
+    }
+
+    private function getKwp(): float
+    {
+        return $this->resolveKwp()[0];
+    }
+
+    private function getSpeicherKwh(): float
+    {
+        return $this->resolveSpeicherKwh()[0];
+    }
+
+    private function getVerguetungCt(): float
+    {
+        return $this->resolveVerguetungCt()[0];
+    }
+
+    private function getInbetriebnahmeIso(): string
+    {
+        return $this->resolveInbetriebnahme()[0];
     }
 
     /** Förderende als ISO-Datum — NUR über EMS ermittelbar (keine eigene Berechnung hier). */
@@ -1202,6 +1251,99 @@ class Szenariorechner extends IPSModule
     {
         $info = $this->getPlantInfo();
         return $info['pflichten'] ?? [];
+    }
+
+    private function fmtZahl(float $v, int $dec = 2): string
+    {
+        return rtrim(rtrim(number_format($v, $dec, ',', ''), '0'), ',');
+    }
+
+    /**
+     * Statuszeile der EMS-Verbindung (Verbund-Konvention "Verbindungen im Formular
+     * sichtbar machen"): live berechnet, nennt Wert UND Quelle je Feld und sagt bei
+     * 0 ausdrücklich, dass es "nicht angegeben" bedeutet und was stattdessen gilt.
+     */
+    private function buildPlantInfoStatusCaption(): string
+    {
+        $this->getPlantInfo();
+        $conn = $this->plantInfoConn;
+        [$kwp, $kwpQ] = $this->resolveKwp();
+        [$spk, $spkQ] = $this->resolveSpeicherKwh();
+        [$verg, $vergQ] = $this->resolveVerguetungCt();
+        [$ibn, $ibnQ] = $this->resolveInbetriebnahme();
+
+        $fehlt = [];
+        $teile = [];
+        $teile[] = $kwp > 0.0 ? $this->fmtZahl($kwp) . " kWp ($kwpQ)" : 'kWp nicht angegeben';
+        $teile[] = $spk > 0.0 ? 'Speicher ' . $this->fmtZahl($spk, 1) . " kWh ($spkQ)" : 'Speicher nicht angegeben';
+        $teile[] = $verg > 0.0 ? 'Vergütung ' . $this->fmtZahl($verg) . " ct/kWh ($vergQ)" : 'Vergütung nicht angegeben';
+        $teile[] = $ibn !== '' ? 'Inbetriebnahme ' . $this->formatAnlageDatum($ibn) . " ($ibnQ)" : 'Inbetriebnahme nicht angegeben';
+        if ($kwp <= 0.0) {
+            $fehlt[] = 'kWp';
+        }
+        if ($spk <= 0.0) {
+            $fehlt[] = 'Speicher';
+        }
+        if ($verg <= 0.0) {
+            $fehlt[] = 'Vergütung';
+        }
+        if ($ibn === '') {
+            $fehlt[] = 'Inbetriebnahme';
+        }
+        $werte = implode(', ', $teile);
+
+        switch ($conn['state']) {
+            case 'ok':
+                $name = @IPS_GetName($conn['id']);
+                $wer = 'EMS #' . $conn['id'] . ($name ? " „{$name}“" : '') . ', Vertrag ' . $conn['contract'];
+                $info = $this->getPlantInfo() ?? [];
+                $extra = '';
+                if (($info['foerderende'] ?? '') !== '') {
+                    $extra .= '; Förderende ' . $this->formatAnlageDatum((string) $info['foerderende']);
+                }
+                $codes = array_filter(array_map(fn($p) => (string) ($p['code'] ?? ''), (array) ($info['pflichten'] ?? [])));
+                if (count($codes) > 0) {
+                    $extra .= '; Pflichten: ' . implode(', ', $codes);
+                }
+                if (count($fehlt) === 0) {
+                    return "✅ Anlagendaten von $wer übernommen: $werte$extra.";
+                }
+                return "⚠️ $wer antwortet, liefert aber nicht alles (fehlt: " . implode(', ', $fehlt)
+                    . "). Es gilt: $werte$extra. Im EMS-Panel „Anlage“ ergänzen oder unten eigene Werte eintragen.";
+            case 'multiple':
+                $liste = '#' . implode(', #', $conn['ids']);
+                return "⚠️ Mehrere EMS-Instanzen gefunden ($liste) — unten die zu verwendende auswählen. Bis dahin gelten die eigenen Angaben: $werte.";
+            case 'contract':
+                return '⚠️ EMS #' . $conn['id'] . ' liefert Anlagendaten im Vertrag ' . $conn['contract']
+                    . ' — dieses Modul versteht 1.x; Modul oder EMS aktualisieren. Bis dahin gelten die eigenen Angaben: ' . $werte . '.';
+            default:
+                return "ℹ️ Kein EMS gefunden — es gelten die eigenen Angaben unten: $werte. Ein Wert von 0 heißt „nicht angegeben“, nicht „nichts vorhanden“.";
+        }
+    }
+
+    /**
+     * Statuszeile der Tibber-Preisquelle (Dynamischer Vertrag, §14a-Preisannahme).
+     */
+    private function buildTibberStatusCaption(): string
+    {
+        if (!function_exists('TIBBERGR_GetPriceCurve')) {
+            return 'ℹ️ TibberGridRewards nicht gefunden — das Szenario „Dynamischer Vertrag“ ist nicht verfügbar, das §14a-Szenario rechnet mit dem Festpreis.';
+        }
+        $ids = array_values(@IPS_GetInstanceListByModuleID(self::TIBBER_MODULE_GUID) ?: []);
+        if (count($ids) === 0) {
+            return 'ℹ️ Keine TibberGridRewards-Instanz angelegt — das Szenario „Dynamischer Vertrag“ ist nicht verfügbar, das §14a-Szenario rechnet mit dem Festpreis.';
+        }
+        $cur = $this->findTibberPriceCurve();
+        if ($cur['id'] === 0) {
+            return '⚠️ TibberGridRewards #' . $ids[0] . ' gefunden, liefert aber keine Preiskurve (Zugangsschlüssel und Haus dort prüfen). Es gilt der Festpreis.';
+        }
+        $ende = 0;
+        foreach ($cur['slots'] as $s) {
+            $ende = max($ende, (int) ($s['end'] ?? 0));
+        }
+        $bis = $ende > 0 ? ', bis ' . date('d.m.Y H:i', $ende) : '';
+        $mehr = count($ids) > 1 ? ' (mehrere Instanzen: die erste mit Preisen wird verwendet)' : '';
+        return '✅ Preiskurve von TibberGridRewards #' . $cur['id'] . ': ' . count($cur['slots']) . ' Zeitabschnitte' . $bis . $mehr . '.';
     }
 
     /**

@@ -8,12 +8,12 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: Anlagendaten (kWp, Inbetriebnahme, Vergütung) werden übernommen, sobald EMS installiert ist — eigene Angaben sind nur noch Ersatzfeld ohne EMS, Standardwerte jetzt \"nicht angegeben\" statt einer bestimmten Anlage. Inbetriebnahmedatum jetzt TT.MM.JJJJ."
+                    "caption": "Neu: Das Formular zeigt jetzt je Verbindung, ob sie steht und was gilt — Anlagendaten von EMS (Wert und Quelle je Feld, auswählbar bei mehreren EMS-Instanzen) und die Tibber-Preiskurve. Zuvor blieb der Hinweistext unverändert stehen."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.5');"
+                    "onClick": "SZR_DismissChangelog($id, '0.6');"
                 }
             ]
         },
@@ -42,11 +42,17 @@
                 {
                     "type": "Label",
                     "name": "PlantInfoStatusLabel",
-                    "caption": "Anlagendaten werden von EMS übernommen, sobald installiert."
+                    "caption": "Verbindung zum EMS wird geprüft …"
                 },
                 {
                     "type": "Label",
-                    "caption": "Nur Ersatzfeld, solange kein EMS installiert ist oder es keine Angabe liefert (EMS führt die Anlagendaten zentral, siehe EMS_GetPlantInfo)."
+                    "caption": "Die Felder unten sind nur Ersatz, solange kein EMS installiert ist oder es einen Wert nicht liefert (EMS führt die Anlagendaten zentral). Welcher Wert gerade gilt und woher er stammt, steht in der Zeile oben."
+                },
+                {
+                    "type": "SelectInstance",
+                    "name": "EmsInstanceID",
+                    "caption": "EMS-Instanz (leer = automatisch, wenn genau eine vorhanden ist)",
+                    "validModules": ["{31C61A7B-28C4-4F97-9651-1A64B3469E3C}"]
                 },
                 {
                     "type": "NumberSpinner",
@@ -84,6 +90,11 @@
             "caption": "Szenario: Dynamischer Vertrag",
             "expanded": true,
             "items": [
+                {
+                    "type": "Label",
+                    "name": "TibberStatusLabel",
+                    "caption": "Preisquelle wird geprüft …"
+                },
                 {
                     "type": "SelectVariable",
                     "name": "NetzbezugVarID",

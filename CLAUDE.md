@@ -60,3 +60,16 @@ Remote. Frühere Kopien dieses Dokuments wurden zusätzlich aus der Historie
 aller Modul-Repos entfernt (`git filter-repo` + Force-Push). Kein
 Fallback-Link mehr — ohne lokalen Zugriff auf Dietmars Maschine ist SUITE.md
 nicht einsehbar.
+
+## Prüfstand vor jedem Push
+
+```
+php .tools/test-form.php    # 0 = grün
+```
+
+Prüft nach `GetConfigurationForm()`, dass jede Statuszeile (EMS-Anlagendaten, Tibber-
+Preiskurve, Version, Netztransparenz) im ausgelieferten JSON steht, der statische
+Platzhalter weg ist und der Inhalt zum Zustand passt (✅/⚠️/ℹ️, Wert UND Quelle je Feld).
+Formularelemente werden immer über `setFormElement()` gesetzt, das **rekursiv** über alle
+`items` sucht — nur die oberste Ebene zu durchsuchen ließ Statuszeilen in Panels unverändert
+(Fund 21.09.2026). Neue Verbindung = neue Statuszeile + neuer Fall im Prüfstand.
