@@ -24,17 +24,17 @@
         {
             "type": "ExpansionPanel",
             "name": "ChangelogPanel",
-            "caption": "🆕 Neu in Version 0.8",
+            "caption": "🆕 Neu in Version 0.9",
             "expanded": true,
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Neu: Zahlen erscheinen nur noch, wenn die Datenlage trägt — es gibt keine erfundenen Standardwerte mehr (Preise, Annahmen stehen auf „nicht angegeben“, bis sie eingetragen sind). Der dynamische Vertrag rechnet mit dem echten Preisverlauf aus dem EMS-Bezugstarif statt mit den Preisen von heute und morgen. Die Speichergröße berücksichtigt die entgangene Einspeisevergütung. 👋 Neue Zweck-Einführung ganz oben."
+                    "caption": "Neu: Netzbezug (MeterHub, Abrechnungszähler bevorzugt) und PV-Erzeugung (InverterHub) werden automatisch erkannt und als Zeile mit Quelle gezeigt (🔗 grün); das Eingabefeld erscheint nur, wenn nichts eindeutig gefunden wird. Bei mehreren gleichrangigen Quellen oder nicht archivierten Variablen meldet das Formular das (⚠️), statt zu raten. Die Hauslast bleibt vorerst manuell."
                 },
                 {
                     "type": "Button",
                     "caption": "Verstanden – nicht mehr anzeigen",
-                    "onClick": "SZR_DismissChangelog($id, '0.8');"
+                    "onClick": "SZR_DismissChangelog($id, '0.9');"
                 }
             ]
         },
@@ -161,7 +161,8 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "ℹ️ Der Netzbezug wird derzeit nicht automatisch von InverterHub oder MeterHub übernommen, bitte hier die archivierte Variable auswählen."
+                    "name": "NetzbezugLine",
+                    "caption": "…"
                 },
                 {
                     "type": "SelectVariable",
@@ -220,12 +221,22 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "ℹ️ Erzeugung und Hauslast werden derzeit nicht automatisch von InverterHub oder MeterHub übernommen, bitte hier die archivierten Variablen (Leistung in W) auswählen. Die aktuelle Speichergröße kommt aus den Anlagendaten oben."
+                    "caption": "Die aktuelle Speichergröße und die Einspeisevergütung kommen aus den Anlagendaten oben."
+                },
+                {
+                    "type": "Label",
+                    "name": "PvErzeugungLine",
+                    "caption": "…"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "PvErzeugungVarID",
                     "caption": "PV-Erzeugung (archivierte Variable, Watt)"
+                },
+                {
+                    "type": "Label",
+                    "name": "HausLastLine",
+                    "caption": "…"
                 },
                 {
                     "type": "SelectVariable",

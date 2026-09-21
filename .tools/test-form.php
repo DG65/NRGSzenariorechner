@@ -15,7 +15,7 @@ $scenario = $argv[1] ?? null;
 
 if ($scenario === null) {
     $fails = 0;
-    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'preis_ok', 'preis_fest', 'preis_keins'] as $sc) {
+    foreach (['ems_ok', 'ems_fehlt', 'ems_keins', 'ems_mehrere', 'ems_vertrag', 'ems_eigen', 'ems_einstellung', 'preis_ok', 'preis_fest', 'preis_keins', 'quelle_ok', 'quelle_mehrere', 'quelle_keins'] as $sc) {
         passthru(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . $sc, $rc);
         $fails += $rc === 0 ? 0 : 1;
     }
@@ -41,12 +41,14 @@ class IPSModule
     public function WriteAttributeString($n, $v) {}
 }
 const KL_WARNING = 103;
-function IPS_GetLibrary($g) { return ['Version' => '0.8.1-beta.1', 'Build' => 17]; }
+function IPS_GetLibrary($g) { return ['Version' => '0.9.0-beta.1', 'Build' => 18]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
 $emsIds = [];
 $tibberIds = [];
+$meterIds = [];
+$ihubIds = [];
 $tarif = 'tibber';
 $plant = [
     'contractVersion' => '1.1', 'inbetriebnahme' => '2012-10-24', 'kwp' => 9.18, 'kwpQuelle' => 'prognose',
@@ -67,6 +69,9 @@ switch ($scenario) {
     case 'preis_ok': $emsIds = [55472]; break;
     case 'preis_fest': $emsIds = [55472]; $tarif = 'fest'; break;
     case 'preis_keins': break;
+    case 'quelle_ok': $meterIds = [10]; $ihubIds = [20]; break;
+    case 'quelle_mehrere': $meterIds = [10, 11]; $ihubIds = [20, 21]; break;
+    case 'quelle_keins': break;
 }
 if ($scenario !== 'ems_keins') {
     // EMS-Funktion existiert in allen Szenarien außer "kein EMS installiert".
@@ -77,8 +82,15 @@ if ($scenario !== 'ems_keins' && $scenario !== 'preis_keins') {
 }
 function IPS_GetInstanceListByModuleID($g)
 {
+    if (str_contains($g, '43192F0B')) { return [1]; }
+    if (str_contains($g, 'BAB8E05C')) { return $GLOBALS['meterIds']; }
+    if (str_contains($g, 'BBE2C593')) { return $GLOBALS['ihubIds']; }
     return str_contains($g, '31C61A7B') ? $GLOBALS['emsIds'] : $GLOBALS['tibberIds'];
 }
+function IPS_ModuleExists($g) { return true; }
+function AC_GetLoggingStatus($a, $v) { return true; }
+function MHUB_GetFunctions(int $id) { return json_encode(['contractVersion' => '1.3', 'assignments' => [['function' => 'grid', 'energyImportID' => 500 + $id, 'energyKind' => 'counter', 'energyMeasured' => true, 'authority' => 'billing']]]); }
+function IHUB_GetFunctions(int $id): array { return ['contractVersion' => '1.3', 'pvPowerID' => 700 + $id]; }
 
 require dirname(__DIR__) . '/Szenariorechner/module.php';
 
@@ -117,7 +129,7 @@ $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
 $check(!str_contains($tibLine, 'wird geprüft'), "Preisquelle: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.8.1'), "Versionszeile nicht ersetzt: $verLine");
+$check(str_contains($verLine, 'Version 0.9.0'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':
@@ -154,6 +166,11 @@ switch ($scenario) {
 $lineOf = fn(string $n) => findEl($el, $n)['caption'] ?? '';
 $visOf = fn(string $n) => findEl($el, $n)['visible'] ?? null;
 $colOf = fn(string $n) => findEl($el, $n)['color'] ?? null;
+$src = ['NetzbezugVarID' => 'NetzbezugLine', 'PvErzeugungVarID' => 'PvErzeugungLine', 'HausLastVarID' => 'HausLastLine'];
+foreach ($src as $in => $ln) {
+    $check(findEl($el, $in) !== null && findEl($el, $ln) !== null && !str_contains($lineOf($ln), '…'), "$in/$ln fehlt oder Platzhalter steht noch");
+    $check(!array_key_exists('value', findEl($el, $in) ?? []), "$in: enthält 'value'");
+}
 $inputs = ['PvKwp' => 'PvKwpLine', 'WrKw' => 'WrKwLine', 'SpeicherKwh' => 'SpeicherKwhLine', 'EinspeiseverguetungCtKwh' => 'VerguetungLine', 'InbetriebnahmeDatum' => 'InbetriebnahmeLine'];
 foreach ($inputs as $in => $ln) {
     $check(findEl($el, $in) !== null && findEl($el, $ln) !== null, "$in/$ln fehlt im Formular");
@@ -168,6 +185,20 @@ $mehrere = $scenario === 'ems_mehrere';
 $check($visOf('EmsInstanceID') === $mehrere, 'EmsInstanceID sichtbar=' . var_export($visOf('EmsInstanceID'), true) . ' (erwartet ' . var_export($mehrere, true) . ')');
 
 switch ($scenario) {
+    case 'quelle_ok':
+        $check(str_starts_with($lineOf('NetzbezugLine'), '🔗') && $colOf('NetzbezugLine') === 0x2E8B3D && $visOf('NetzbezugVarID') === false, 'Netzbezug automatisch: 🔗, grün, Eingabefeld verborgen: ' . $lineOf('NetzbezugLine'));
+        $check(str_contains($lineOf('NetzbezugLine'), 'MeterHub #10') && str_contains($lineOf('NetzbezugLine'), 'Abrechnungszähler'), 'Netzbezug nennt Instanz und Zählerart');
+        $check(str_starts_with($lineOf('PvErzeugungLine'), '🔗') && $visOf('PvErzeugungVarID') === false, 'PV automatisch: 🔗, Eingabefeld verborgen: ' . $lineOf('PvErzeugungLine'));
+        $check(str_starts_with($lineOf('HausLastLine'), 'ℹ️') && $visOf('HausLastVarID') === true && str_contains($lineOf('HausLastLine'), 'nicht automatisch'), 'Hauslast: ehrlich ℹ️ nicht automatisch, Feld sichtbar: ' . $lineOf('HausLastLine'));
+        $check($visOf('ShowOwnValuesButton') === true, 'Knopf für eigene Werte sichtbar, solange etwas verborgen ist');
+        break;
+    case 'quelle_mehrere':
+        $check(str_starts_with($lineOf('NetzbezugLine'), '⚠️') && $visOf('NetzbezugVarID') === true, 'Netzbezug mehrere: ⚠️ und Feld sichtbar: ' . $lineOf('NetzbezugLine'));
+        $check(str_starts_with($lineOf('PvErzeugungLine'), '⚠️') && $visOf('PvErzeugungVarID') === true, 'PV mehrere: ⚠️ und Feld sichtbar: ' . $lineOf('PvErzeugungLine'));
+        break;
+    case 'quelle_keins':
+        $check(str_starts_with($lineOf('NetzbezugLine'), 'ℹ️') && $visOf('NetzbezugVarID') === true, 'Netzbezug ohne MeterHub: ℹ️, Feld sichtbar');
+        break;
     case 'ems_ok':
         $check($lineOf('PvKwpLine') === '🔗 PV-Leistung: 9,18 kWp (automatisch von EMS, PV-Prognose)', 'PvKwpLine: ' . $lineOf('PvKwpLine'));
         $check(str_starts_with($lineOf('SpeicherKwhLine'), '🔗') && str_contains($lineOf('SpeicherKwhLine'), '40 kWh'), 'SpeicherKwhLine: ' . $lineOf('SpeicherKwhLine'));
@@ -201,7 +232,7 @@ switch ($scenario) {
 // ---- Verbund-Konventionen am ausgelieferten Formular (SUITE.md) --------------------
 $els = $form['elements'];
 $check(($els[0]['name'] ?? '') === 'PurposeIntroPanel' && ($els[0]['expanded'] ?? false) === true, '"Wozu dieses Modul?" muss ganz oben stehen und aufgeklappt sein');
-$check(str_contains($els[1]['caption'] ?? '', 'Neu in Version 0.8'), 'Neu-Panel muss die Versionsnummer in der Caption tragen: ' . ($els[1]['caption'] ?? ''));
+$check(str_contains($els[1]['caption'] ?? '', 'Neu in Version 0.9'), 'Neu-Panel muss die Versionsnummer in der Caption tragen: ' . ($els[1]['caption'] ?? ''));
 $last = end($els);
 $check(str_contains($last['caption'] ?? '', 'Über dieses Modul') && !isset($last['name']), '"Über dieses Modul" muss ganz unten stehen und darf nicht dismissible sein (kein name)');
 $forum = findEl($els, 'ForumHint');

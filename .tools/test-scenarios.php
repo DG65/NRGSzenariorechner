@@ -33,11 +33,16 @@ function IPS_ModuleExists($g) { return true; }
 function IPS_GetInstanceListByModuleID($g)
 {
     if (str_contains($g, '43192F0B')) { return [1]; }            // Archive Control
-    return str_contains($g, '31C61A7B') ? ($GLOBALS['emsIds'] ?? []) : [];
+    if (str_contains($g, '31C61A7B')) { return $GLOBALS['emsIds'] ?? []; }
+    if (str_contains($g, 'BAB8E05C')) { return $GLOBALS['meterIds'] ?? []; }
+    if (str_contains($g, 'BBE2C593')) { return $GLOBALS['ihubIds'] ?? []; }
+    return [];
 }
+function MHUB_GetFunctions(int $id) { return json_encode($GLOBALS['mhub'][$id] ?? []); }
+function IHUB_GetFunctions(int $id): array { return $GLOBALS['ihub'][$id] ?? []; }
 function IPS_GetLibrary($g) { return ['Version' => '0.8.0', 'Build' => 16]; }
 function IPS_GetName($id) { return 'EMS'; }
-function AC_GetLoggingStatus($a, $v) { return true; }
+function AC_GetLoggingStatus($a, $v) { return $GLOBALS['archived'][$v] ?? true; }
 function AC_GetAggregatedValues($a, $var, $lvl, $from, $to, $lim)
 {
     $gapDay = $GLOBALS['gapDayStart'] ?? null;
@@ -74,6 +79,11 @@ function fresh(array $props, array $extra = []): Szenariorechner
     $GLOBALS['props'] = $props;
     $GLOBALS['emsIds'] = [55472];
     $GLOBALS['gapDayStart'] = null;
+    $GLOBALS['meterIds'] = [];
+    $GLOBALS['ihubIds'] = [];
+    $GLOBALS['mhub'] = [];
+    $GLOBALS['ihub'] = [];
+    $GLOBALS['archived'] = [];
     foreach ($extra as $k => $v) { $GLOBALS[$k] = $v; }
     return new Szenariorechner();
 }
@@ -147,6 +157,49 @@ $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' 
 $GLOBALS['emsIds'] = [];
 $r = $m->CalculateStorageSizeScenario(2);
 check($r['feedInKnown'] === false && str_contains($r['reason'], 'Einspeisevergütung nicht angegeben'), 'Speicher: fehlende Vergütung wird als optimistisch gemeldet', $r['reason']);
+
+
+// I) Automatische Erkennung der Quellvariablen -------------------------------------------------
+$grid = fn(int $vid, string $auth = 'billing', array $more = []) => array_merge(['contractVersion' => '1.3', 'authority' => $auth,
+    'assignments' => [array_merge(['function' => 'grid', 'energyImportID' => $vid, 'energyKind' => 'counter', 'energyMeasured' => true, 'authority' => $auth], $more)]], []);
+// I1: ein Abrechnungszähler wird ohne jede Eingabe übernommen und rechnet
+$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [500 => $one], 'priceAt' => fn($t) => 20.0, 'meterIds' => [10], 'mhub' => [10 => $grid(500)]]);
+$av = $m->GetAvailableScenarios()[0];
+$r = $m->CalculateDynamicTariffScenario(2);
+check($av['available'] === true && abs($r['savingsEur'] - 4.80) < 0.01, 'Erkennung: MeterHub-Netzzähler ohne Eingabe übernommen, Szenario rechnet', json_encode([$av, $r['savingsEur']]));
+// I2: billing schlägt auxiliary
+$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [501 => $one, 502 => fn() => 9.0], 'priceAt' => fn($t) => 20.0, 'meterIds' => [10, 11], 'mhub' => [10 => $grid(502, 'auxiliary'), 11 => $grid(501, 'billing')]]);
+$r = $m->CalculateDynamicTariffScenario(2);
+check(abs($r['consumptionKwh'] - 48.0) < 0.01, 'Erkennung: Abrechnungszähler (billing) wird dem Hilfszähler vorgezogen', (string) $r['consumptionKwh']);
+// I3: zwei gleichrangige → nicht raten
+$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [501 => $one, 502 => $one], 'priceAt' => fn($t) => 20.0, 'meterIds' => [10, 11], 'mhub' => [10 => $grid(501), 11 => $grid(502)]]);
+$av = $m->GetAvailableScenarios()[0];
+check($av['available'] === false && str_contains($av['reason'], 'Netzbezug'), 'Erkennung: zwei gleichrangige Zähler werden nicht geraten', $av['reason']);
+// I4: nicht archiviert, hochgerechnet, fremder Vertrag → nicht verwendet
+foreach ([['nicht archiviert', $grid(500), ['archived' => [500 => false]]],
+          ['hochgerechnet', $grid(500, 'billing', ['energyMeasured' => false]), []],
+          ['Vertrag 2.0', array_merge($grid(500), ['contractVersion' => '2.0']), []]] as [$name, $mh, $ex]) {
+    $m = fresh(['FestpreisCtKwh' => 30.0], array_merge(['series' => [500 => $one], 'priceAt' => fn($t) => 20.0, 'meterIds' => [10], 'mhub' => [10 => $mh]], $ex));
+    check($m->GetAvailableScenarios()[0]['available'] === false, "Erkennung: Zähler wird nicht verwendet ($name)");
+}
+// I5: eigene Eingabe überschreibt die Automatik
+$m = fresh(['FestpreisCtKwh' => 30.0, 'NetzbezugVarID' => 501, 'NetzbezugIstZaehler' => true], ['series' => [500 => fn() => 9.0, 501 => $one], 'priceAt' => fn($t) => 20.0, 'meterIds' => [10], 'mhub' => [10 => $grid(500)]]);
+$r = $m->CalculateDynamicTariffScenario(2);
+check(abs($r['consumptionKwh'] - 48.0) < 0.01, 'Erkennung: eigene Eingabe überschreibt den automatisch gefundenen Zähler', (string) $r['consumptionKwh']);
+// I6: PV aus InverterHub, Hauslast bleibt manuell
+$pvW = fn($t) => ((int) date('G', $t) === 12) ? 15000.0 : 0.0;
+$m = fresh(['HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0, 'SpeicherKwh' => 10.0],
+    ['series' => [700 => $pvW, 201 => $ld], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]]]);
+$GLOBALS['emsIds'] = [];
+$av = $m->GetAvailableScenarios()[1];
+$r = $m->CalculateStorageSizeScenario(2);
+check($av['available'] === true && count($r['sizes']) > 0, 'Erkennung: PV-Leistung aus InverterHub, Speicher-Szenario rechnet mit manueller Hauslast', json_encode($av));
+$m = fresh(['FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]]]);
+check($m->GetAvailableScenarios()[1]['available'] === false && str_contains($m->GetAvailableScenarios()[1]['reason'], 'Hauslast'), 'Erkennung: Hauslast wird NICHT automatisch übernommen, Grund genannt');
+// I7: mehrere Wechselrichter → keine Summe raten
+$m = fresh(['HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0], ['series' => [700 => $pvW, 701 => $pvW, 201 => $ld], 'ihubIds' => [20, 21],
+    'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700], 21 => ['contractVersion' => '1.3', 'pvPowerID' => 701]]]);
+check($m->GetAvailableScenarios()[1]['available'] === false, 'Erkennung: mehrere Wechselrichter werden nicht zu einer geratenen Summe');
 
 // F) §14a: ohne Annahmen kein Ergebnis, mit Annahmen nachrechenbar -----------------------------
 $m = fresh([], ['series' => []]);

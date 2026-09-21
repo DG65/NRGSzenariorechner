@@ -127,7 +127,7 @@ class Szenariorechner extends IPSModule
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
 
-        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.8']);
+        $this->setFormElement($form['elements'], 'ChangelogPanel', ['visible' => $this->ReadAttributeString('ChangelogSeen') !== '0.9']);
         $this->setFormElement($form['elements'], 'PurposeIntroPanel', ['visible' => !$this->ReadAttributeBoolean('PurposeIntroGone')]);
         $this->setFormElement($form['elements'], 'ForumHint', ['visible' => !$this->ReadAttributeBoolean('ForumHintGone')]);
         $this->setFormElement($form['elements'], 'DocVersionLabel', ['caption' => $this->buildVersionCaption()]);
@@ -140,6 +140,15 @@ class Szenariorechner extends IPSModule
         foreach ($this->buildPlantFieldRows() as $field => $row) {
             $this->setFormElement($form['elements'], $row['lineName'], ['caption' => $row['line'], 'color' => $row['color']]);
             $this->setFormElement($form['elements'], $field, ['visible' => $row['visible']]);
+            $anyHidden = $anyHidden || !$row['visible'];
+        }
+        foreach ($this->buildSourceRows() as $field => $row) {
+            $this->setFormElement($form['elements'], $row['lineName'], ['caption' => $row['line'], 'color' => $row['color']]);
+            $this->setFormElement($form['elements'], $field, ['visible' => $row['visible']]);
+            if ($field === 'NetzbezugVarID') {
+                // Automatisch erkannt ist es immer ein Zählerstand, die Auswahl entfällt.
+                $this->setFormElement($form['elements'], 'NetzbezugIstZaehler', ['visible' => $row['visible']]);
+            }
             $anyHidden = $anyHidden || !$row['visible'];
         }
         $this->setFormElement($form['elements'], 'ShowOwnValuesButton', ['visible' => $anyHidden]);
@@ -199,8 +208,8 @@ class Szenariorechner extends IPSModule
         // Standardwerte, deshalb rechnet ein Szenario erst, wenn seine Angaben da sind.
         $price = $this->dynamicPriceSource();
         $reasons = [];
-        if ((int) $this->ReadPropertyInteger('NetzbezugVarID') <= 0) {
-            $reasons[] = 'Netzbezugsvariable nicht angegeben';
+        if ($this->resolveNetzbezug()[0] <= 0) {
+            $reasons[] = 'Netzbezug nicht angegeben und nicht automatisch gefunden';
         }
         if ((float) $this->ReadPropertyFloat('FestpreisCtKwh') <= 0.0) {
             $reasons[] = 'aktueller Festpreis nicht angegeben';
@@ -218,8 +227,11 @@ class Szenariorechner extends IPSModule
         ];
 
         $reasons = [];
-        if ((int) $this->ReadPropertyInteger('PvErzeugungVarID') <= 0 || (int) $this->ReadPropertyInteger('HausLastVarID') <= 0) {
-            $reasons[] = 'PV-Erzeugungs- oder Hauslastvariable nicht angegeben';
+        if ($this->resolvePv()[0] <= 0) {
+            $reasons[] = 'PV-Erzeugung nicht angegeben und nicht automatisch gefunden';
+        }
+        if ($this->resolveLast()[0] <= 0) {
+            $reasons[] = 'Hauslast nicht angegeben';
         }
         if ((float) $this->ReadPropertyFloat('FestpreisCtKwh') <= 0.0) {
             $reasons[] = 'aktueller Bezugspreis (Festpreis) nicht angegeben';
@@ -540,7 +552,8 @@ class Szenariorechner extends IPSModule
         $result['periodFrom'] = $start;
         $result['periodTo'] = $end;
 
-        $series = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('NetzbezugVarID'), (bool) $this->ReadPropertyBoolean('NetzbezugIstZaehler'), $start, $end);
+        [$gridVar, , , $gridIsCounter] = $this->resolveNetzbezug();
+        $series = $this->hourlyKwhSeries($gridVar, $gridIsCounter, $start, $end);
         if ($series === null) {
             $result['reason'] = 'Netzbezugsvariable ist ungültig oder nicht archiviert';
             return $result;
@@ -711,8 +724,8 @@ class Szenariorechner extends IPSModule
         $result['periodFrom'] = $start;
         $result['periodTo'] = $end;
 
-        $pv = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('PvErzeugungVarID'), false, $start, $end);
-        $load = $this->hourlyKwhSeries((int) $this->ReadPropertyInteger('HausLastVarID'), false, $start, $end);
+        $pv = $this->hourlyKwhSeries($this->resolvePv()[0], false, $start, $end);
+        $load = $this->hourlyKwhSeries($this->resolveLast()[0], false, $start, $end);
         if ($pv === null || $load === null) {
             $result['reason'] = 'PV-Erzeugungs- oder Hauslastvariable ist ungültig oder nicht archiviert';
             return $result;
@@ -1193,6 +1206,225 @@ class Szenariorechner extends IPSModule
     }
 
     // -----------------------------------------------------------------
+    //  Quellvariablen automatisch erkennen (Discovery vor manuellem Feld)
+    // -----------------------------------------------------------------
+    // SUITE.md: ein Feature, das Daten eines Partnermoduls braucht, prüft ZUERST die vorhandene
+    // Discovery; das manuelle Feld ist nur Ersatz. Netzbezug kommt aus MeterHub (Funktion
+    // `grid`, kumulativer Zähler `energyImportID` = Bezug, Abrechnungszähler `authority=billing`
+    // vor `auxiliary`), die PV-Erzeugung aus InverterHub (`pvPowerID`, W). Die Hauslast wird
+    // NICHT automatisch übernommen: das Vorzeichen der MeterHub-Funktion `house` ist im Vertrag
+    // nicht verbindlich festgelegt (Stand 21.09.2026, EMS fragt bei MeterHub nach).
+    // Nicht raten: mehrere gleichrangige Kandidaten oder eine nicht archivierte Variable werden
+    // als ⚠️ gemeldet und NICHT verwendet.
+
+    private const METERHUB_GUID = '{BAB8E05C-9150-43B9-9F2B-E5215FA54F0A}';
+    private const METERHUB_VIRTUAL_GUID = '{ADF18291-2E60-4354-92F5-B96863C127C8}';
+    private const INVERTERHUB_GUID = '{BBE2C593-1A91-426D-A714-29A9C7E87589}';
+
+    /** @var array<string, array> Request-lokaler Cache je Quelle. */
+    private $sourceCache = [];
+
+    /** Vertragsantwort eines Partners lesen: String (JSON) oder Array, im try/catch, Major 1 verlangt. */
+    private function readPartnerContract(callable $call, string $what, ?string &$contractOut = null): ?array
+    {
+        try {
+            $r = $call();
+        } catch (\Throwable $e) {
+            $this->LogMessage("$what fehlgeschlagen: " . $e->getMessage(), KL_WARNING);
+            return null;
+        }
+        if (is_string($r)) {
+            $r = json_decode($r, true);
+        }
+        if (!is_array($r)) {
+            return null;
+        }
+        $contractOut = (string) ($r['contractVersion'] ?? '1.0');
+        return str_starts_with($contractOut, '1.') ? $r : null;
+    }
+
+    /**
+     * Netzbezug-Zähler aus MeterHub. state: ok|none|multiple|unarchived. Bei ok: 'varId' (kumulativer
+     * Zähler, kWh), 'text' Quelle.
+     *
+     * @return array{state: string, varId: int, text: string, ids: array}
+     */
+    private function discoverGridImport(): array
+    {
+        if (isset($this->sourceCache['grid'])) {
+            return $this->sourceCache['grid'];
+        }
+        $res = ['state' => 'none', 'varId' => 0, 'text' => '', 'ids' => []];
+        $cands = [];
+        foreach ([[self::METERHUB_GUID, 'MHUB_GetFunctions'], [self::METERHUB_VIRTUAL_GUID, 'MHUBV_GetFunctions']] as [$guid, $fn]) {
+            if (!function_exists($fn)) {
+                continue;
+            }
+            foreach ((@IPS_GetInstanceListByModuleID($guid) ?: []) as $iid) {
+                $r = $this->readPartnerContract(fn() => $fn($iid), "$fn #$iid");
+                foreach ((array) ($r['assignments'] ?? []) as $a) {
+                    if (!is_array($a) || ($a['function'] ?? '') !== 'grid' || (int) ($a['energyImportID'] ?? 0) <= 0) {
+                        continue;
+                    }
+                    if (($a['energyKind'] ?? 'counter') !== 'counter' || ($a['energyMeasured'] ?? true) === false) {
+                        continue;   // nur echte, gemessene Zählerstände (nie hochgerechnet)
+                    }
+                    $vid = (int) $a['energyImportID'];
+                    $cands[] = ['inst' => (int) $iid, 'vid' => $vid, 'auth' => (string) ($a['authority'] ?? $r['authority'] ?? 'auxiliary'),
+                                'archived' => $this->getArchiveID($vid) > 0];
+                }
+            }
+        }
+        if (count($cands) === 0) {
+            return $this->sourceCache['grid'] = $res;
+        }
+        $usable = array_values(array_filter($cands, fn($c) => $c['archived']));
+        if (count($usable) === 0) {
+            $res['state'] = 'unarchived';
+            $res['ids'] = array_values(array_unique(array_column($cands, 'inst')));
+            return $this->sourceCache['grid'] = $res;
+        }
+        $billing = array_values(array_filter($usable, fn($c) => $c['auth'] === 'billing'));
+        $pool = count($billing) > 0 ? $billing : $usable;
+        if (count($pool) > 1) {
+            $res['state'] = 'multiple';
+            $res['ids'] = array_values(array_unique(array_column($pool, 'inst')));
+            return $this->sourceCache['grid'] = $res;
+        }
+        $c = $pool[0];
+        $name = @IPS_GetName($c['inst']);
+        $res['state'] = 'ok';
+        $res['varId'] = $c['vid'];
+        $res['ids'] = [$c['inst']];
+        $res['text'] = 'MeterHub #' . $c['inst'] . ($name ? " „{$name}“" : '') . ', Netzanschluss, '
+            . ($c['auth'] === 'billing' ? 'Abrechnungszähler' : 'Hilfszähler');
+        return $this->sourceCache['grid'] = $res;
+    }
+
+    /**
+     * PV-Erzeugung (Leistung, W) aus InverterHub. state: ok|none|multiple|unarchived.
+     *
+     * @return array{state: string, varId: int, text: string, ids: array}
+     */
+    private function discoverPvPower(): array
+    {
+        if (isset($this->sourceCache['pv'])) {
+            return $this->sourceCache['pv'];
+        }
+        $res = ['state' => 'none', 'varId' => 0, 'text' => '', 'ids' => []];
+        if (!function_exists('IHUB_GetFunctions')) {
+            return $this->sourceCache['pv'] = $res;
+        }
+        $cands = [];
+        foreach ((@IPS_GetInstanceListByModuleID(self::INVERTERHUB_GUID) ?: []) as $iid) {
+            $r = $this->readPartnerContract(fn() => IHUB_GetFunctions($iid), "IHUB_GetFunctions #$iid");
+            $vid = (int) ($r['pvPowerID'] ?? 0);
+            if ($vid > 0) {
+                $cands[] = ['inst' => (int) $iid, 'vid' => $vid, 'archived' => $this->getArchiveID($vid) > 0];
+            }
+        }
+        if (count($cands) === 0) {
+            return $this->sourceCache['pv'] = $res;
+        }
+        $usable = array_values(array_filter($cands, fn($c) => $c['archived']));
+        if (count($usable) === 0) {
+            $res['state'] = 'unarchived';
+            $res['ids'] = array_column($cands, 'inst');
+            return $this->sourceCache['pv'] = $res;
+        }
+        if (count($usable) > 1) {
+            // Mehrere Wechselrichter: eine Summe bildet erst ein virtueller Wechselrichter, nicht raten.
+            $res['state'] = 'multiple';
+            $res['ids'] = array_column($usable, 'inst');
+            return $this->sourceCache['pv'] = $res;
+        }
+        $name = @IPS_GetName($usable[0]['inst']);
+        $res['state'] = 'ok';
+        $res['varId'] = $usable[0]['vid'];
+        $res['ids'] = [$usable[0]['inst']];
+        $res['text'] = 'InverterHub #' . $usable[0]['inst'] . ($name ? " „{$name}“" : '') . ', PV-Leistung gesamt';
+        return $this->sourceCache['pv'] = $res;
+    }
+
+    /**
+     * Auflösung je Quellvariable: eigene Eingabe > automatisch erkannt > nichts.
+     *
+     * @return array{0: int, 1: string, 2: string} [Variablen-ID, Quelltext, Art own|auto|none]
+     */
+    private function resolveSource(string $prop, array $disc): array
+    {
+        $own = (int) $this->ReadPropertyInteger($prop);
+        if ($own > 0) {
+            return [$own, 'eigene Eingabe' . ($disc['state'] === 'ok' ? ', überschreibt ' . $disc['text'] : ''), 'own'];
+        }
+        if ($disc['state'] === 'ok') {
+            return [$disc['varId'], $disc['text'], 'auto'];
+        }
+        return [0, 'nicht angegeben', 'none'];
+    }
+
+    /** @return array{0: int, 1: string, 2: string, 3: bool} Netzbezug: [ID, Text, Art, ist Zähler] */
+    private function resolveNetzbezug(): array
+    {
+        $r = $this->resolveSource('NetzbezugVarID', $this->discoverGridImport());
+        // Automatisch erkannt ist es immer ein kumulativer Zähler; bei eigener Wahl gilt die Angabe.
+        $isCounter = $r[2] === 'auto' ? true : (bool) $this->ReadPropertyBoolean('NetzbezugIstZaehler');
+        return [$r[0], $r[1], $r[2], $isCounter];
+    }
+
+    /** @return array{0: int, 1: string, 2: string} */
+    private function resolvePv(): array
+    {
+        return $this->resolveSource('PvErzeugungVarID', $this->discoverPvPower());
+    }
+
+    /** @return array{0: int, 1: string, 2: string} Hauslast: keine automatische Quelle. */
+    private function resolveLast(): array
+    {
+        return $this->resolveSource('HausLastVarID', ['state' => 'none']);
+    }
+
+    /**
+     * Zeilen zu den drei Quellvariablen (Konvention: 🔗 automatisch grün / ✏️ eigene Eingabe /
+     * ⚠️ nicht eindeutig oder nicht archiviert / ℹ️ nichts gefunden), gleiche Struktur wie
+     * buildPlantFieldRows().
+     *
+     * @return array<string, array{line: string, lineName: string, visible: bool, color: int}>
+     */
+    private function buildSourceRows(): array
+    {
+        $rows = [];
+        $mk = function (string $field, string $lineName, string $label, array $res, array $disc, string $noneText) use (&$rows) {
+            [$vid, $text, $kind] = $res;
+            $name = $vid > 0 ? (string) @IPS_GetName($vid) : '';
+            $ref = $vid > 0 ? 'Variable #' . $vid . ($name ? " „{$name}“" : '') : '';
+            $vis = true;
+            $color = -1;
+            if ($kind === 'auto') {
+                $line = "🔗 $label: $ref ($text)";
+                $vis = false;
+                $color = self::COLOR_AUTO;
+            } elseif ($kind === 'own') {
+                $line = "✏️ $label: $ref ($text)";
+            } elseif (($disc['state'] ?? '') === 'multiple') {
+                $line = "⚠️ $label: mehrere gleichrangige Quellen gefunden (Instanzen #" . implode(', #', $disc['ids']) . ') — es wird keine geraten, bitte unten die Variable selbst wählen.';
+            } elseif (($disc['state'] ?? '') === 'unarchived') {
+                $line = "⚠️ $label: Quelle gefunden (Instanz #" . implode(', #', $disc['ids']) . '), die Variable ist aber nicht archiviert — Archivierung einschalten oder unten eine archivierte Variable wählen.';
+            } else {
+                $line = "ℹ️ $label: $noneText";
+            }
+            $rows[$field] = ['line' => $line, 'lineName' => $lineName, 'visible' => $vis, 'color' => $color];
+        };
+        $mk('NetzbezugVarID', 'NetzbezugLine', 'Netzbezug', $this->resolveNetzbezug(), $this->discoverGridImport(),
+            'kein MeterHub mit der Funktion „Netzanschluss“ und archiviertem Zählerstand gefunden, bitte unten die archivierte Variable wählen.');
+        $mk('PvErzeugungVarID', 'PvErzeugungLine', 'PV-Erzeugung', $this->resolvePv(), $this->discoverPvPower(),
+            'kein InverterHub mit archivierter PV-Leistung gefunden, bitte unten die archivierte Variable (Watt) wählen.');
+        $mk('HausLastVarID', 'HausLastLine', 'Hauslast', $this->resolveLast(), ['state' => 'none'],
+            'wird derzeit nicht automatisch übernommen (das Vorzeichen der MeterHub-Funktion „Hausverbrauch“ ist im Vertrag nicht verbindlich festgelegt), bitte unten die archivierte Variable (Watt) wählen.');
+        return $rows;
+    }
+
+    // -----------------------------------------------------------------
     //  Anlagendaten — EMS_GetPlantInfo() als führende Quelle
     // -----------------------------------------------------------------
     // EMS führt die Anlagendaten seit 0.34.0 zentral (Vertrag 'plantinfo'
@@ -1523,7 +1755,7 @@ class Szenariorechner extends IPSModule
     /** Grün für automatisch übernommene Werte (Verbund-Konvention, EMS_COLOR_AUTO); -1 = Standardfarbe. */
     private const COLOR_AUTO = 0x2E8B3D;
 
-    private const EIGENE_FELDER = ['PvKwp', 'WrKw', 'SpeicherKwh', 'EinspeiseverguetungCtKwh', 'InbetriebnahmeDatum'];
+    private const EIGENE_FELDER = ['PvKwp', 'WrKw', 'SpeicherKwh', 'EinspeiseverguetungCtKwh', 'InbetriebnahmeDatum', 'NetzbezugVarID', 'NetzbezugIstZaehler', 'PvErzeugungVarID', 'HausLastVarID'];
 
     /**
      * Schreibgeschützte Zeile je Feld (Verbund-Konvention "Wert kommt automatisch:

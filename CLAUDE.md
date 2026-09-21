@@ -85,6 +85,11 @@ nicht einsehbar.
   (9g); Datenlücken sind `null`/ausgelassen, nie 0 (Stolperstein 15); Einheiten dokumentieren (16):
   Preise ct/kWh brutto, Ergebnisse EUR; keine Zahl in die Ergebnisvariable schreiben, wenn die Abdeckung unter
   90 % liegt.
+- **Quellvariablen zuerst per Discovery** (`discoverGridImport()`, `discoverPvPower()`): Netzbezug aus
+  `MHUB_GetFunctions`/`MHUBV_GetFunctions` (Funktion `grid`, `energyImportID` als kumulativer, gemessener Zähler,
+  `authority=billing` vor `auxiliary`), PV aus `IHUB_GetFunctions.pvPowerID`. Nur archivierte Variablen; mehrere
+  gleichrangige oder nicht archivierte → ⚠️, nie geraten. Hauslast bleibt manuell (Vorzeichen von MeterHub
+  `house` nicht verbindlich). MeterHub liefert einen JSON-**String**, InverterHub ein Array.
 - **Preise der Vergangenheit** kommen aus `EMS_GetPurchasePriceHistory` (Bezugstarif „Tibber“, echter
   Archiv-Verlauf), NICHT aus `TIBBERGR_GetPriceCurve` (nur heute/morgen) und nicht aus
   `NRGDASH_GetPriceSeries` (dort für die Vergangenheit nur BDEW-Näherung).
@@ -96,7 +101,7 @@ nicht einsehbar.
 
 ```
 php .tools/check-standalone.php   # Fremdaufrufe abgesichert
-php .tools/test-form.php          # Statuszeilen, Formular-Konventionen (12 Fälle)
+php .tools/test-form.php          # Statuszeilen, Formular-Konventionen (16 Fälle)
 php .tools/test-scenarios.php     # Rechnung, Lücken, Zeitumstellung, Standardwerte
 ```
 
