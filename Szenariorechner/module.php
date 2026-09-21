@@ -409,7 +409,12 @@ class Szenariorechner extends IPSModule
 
         $this->SetTimerInterval('RefreshScenarios', 24 * 60 * 60 * 1000);
         // Sofort einmal rechnen statt bis zu 24h auf den ersten Wert zu warten.
-        $this->RefreshScenarioVariables();
+        try {
+            $this->RefreshScenarioVariables();
+        } catch (\Throwable $e) {
+            // Ein Rechenfehler darf das Anlegen/Speichern der Instanz nie verhindern.
+            $this->SendDebug(__FUNCTION__, 'Sofortberechnung fehlgeschlagen: ' . $e->getMessage(), 0);
+        }
     }
 
     /**
@@ -517,7 +522,7 @@ class Szenariorechner extends IPSModule
         }
 
         // Preiskurve holen und auf Stundenmittel verdichten.
-        $slots = TIBBERGR_GetPriceCurve();
+        $slots = $this->getTibberPriceCurve();
         $hourlyPriceSum = [];
         $hourlyPriceCount = [];
         foreach ($slots as $slot) {
@@ -792,9 +797,9 @@ class Szenariorechner extends IPSModule
         $betroffeneEnergieJahrKwh = $ereignisse * ($dauerMinuten / 60.0) * $reduktionKw;
 
         $mittlererPreisCtKwh = $this->ReadPropertyFloat('FestpreisCtKwh');
-        if (function_exists('TIBBERGR_GetPriceCurve')) {
-            $slots = @TIBBERGR_GetPriceCurve();
-            if (is_array($slots) && count($slots) > 0) {
+        {
+            $slots = $this->getTibberPriceCurve();
+            if (count($slots) > 0) {
                 $sum = 0.0;
                 $n = 0;
                 foreach ($slots as $slot) {
@@ -1048,6 +1053,26 @@ class Szenariorechner extends IPSModule
             $hourlyKwh[$hourStart] = $isCounter ? $avg : ($avg / 1000.0);
         }
         return $hourlyKwh;
+    }
+
+    /**
+     * Preiskurve der ersten TibberGridRewards-Instanz, die eine liefert.
+     * TIBBERGR_GetPriceCurve verlangt die Instanz-ID (Vertrag: `(int $id): array`) —
+     * ein Aufruf ohne Argument ist in PHP 8 ein Fatal Error, den `@` nicht abfängt.
+     * Leere Liste ohne Modul, ohne Instanz oder ohne Preise.
+     */
+    private function getTibberPriceCurve(): array
+    {
+        if (!function_exists('TIBBERGR_GetPriceCurve')) {
+            return [];
+        }
+        foreach ((@IPS_GetInstanceListByModuleID('{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}') ?: []) as $iid) {
+            $slots = @TIBBERGR_GetPriceCurve($iid);
+            if (is_array($slots) && count($slots) > 0) {
+                return $slots;
+            }
+        }
+        return [];
     }
 
     private function getArchiveID(int $varID): int
