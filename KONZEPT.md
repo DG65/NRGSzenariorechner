@@ -78,6 +78,31 @@ im Formular als bekannte Einschränkung vermerkt.
   Solarspitzengesetz" wird der Marktwert-Solar-Endpunkt gebraucht (Vergleich EEG-Vergütung
   vs. Marktwert nach Formelabzug). Registrierung daher erst vor Phase 4 nötig, kein
   Grund, sie jetzt schon vorzuziehen.
+- **Zentrales Verbund-Modul statt eigenem Client (Fund ModbusSlave/DVHub, 22.09.2026):**
+  `DG65/NRGNetztransparenz` (Präfix `NTP`) bündelt den API-Zugriff für den ganzen Verbund
+  (DVHub, künftig EMS für §51, hier für Phase 4) — Grund: 2 Anfragen/Sekunde/IP-Limit,
+  mehrere unabhängig pollende Module könnten sich sonst gegenseitig aussperren (2h-Sperre).
+  Verträge: `NTP_IsNegativePriceHour($id, $unixTimestamp): bool` (Live-Klassifikation,
+  gecacht), `NTP_GetHistoricalNegativePreise($id, $logic, $from, $to): string`,
+  `NTP_GetConnectionState($id): string`. Live gegen die Swagger-UI verifiziert (22.09.2026):
+  `/NegativePreise/{logic}/{dateFrom}/{dateTo}` — auch hier Pfadsegmente statt Query
+  (derselbe Fallstrick wie bei `marktpraemie`), gültige `logic`-Werte **1, 2, 3, 4, 6, 15**
+  (nicht nur 1/3/4/6, wie oben aus der PDF abgeleitet — hier korrigiert). Zusätzlich ein
+  zweiter Endpunkt ohne `logic` (`/NegativePreise/{dateFrom}/{dateTo}`, wendet selbst die
+  aktuell gültige Regel an) für reine Live-Klassifikation ohne EEG-Fassung-Kenntnis.
+  **Kein automatisches Chunking bei `GetHistoricalNegativePreise()`** (Stand 22.09.2026,
+  DVHub-Rückmeldung): reicht `from`/`to` unverändert durch, kein bekanntes Zeitraum-Limit
+  in der Doku, aber nie gegen einen mehrjährigen Zeitraum getestet — bei Timeout/Fehler in
+  Phase 4 zuerst dort melden (nützt dann allen), nicht selbst nachbauen.
+  **logic-zu-EEG-Fassung-Zuordnung bleibt offen**, bei DVHub wie hier — wird ins
+  `NRGNetztransparenz`-CLAUDE.md eingetragen, sobald einer von beiden sie tatsächlich
+  braucht (bei uns: Phase 4, § 51a/Solarspitzengesetz-Vergütungsausfall je Fassung).
+  **Entscheidung (22.09.2026):** Eigenen Client (`getNetztransparenzToken()`/
+  `fetchNetztransparenzCsv()`, bislang an kein Szenario angeschlossen) beim Bau von
+  Phase 4 auf `NTP_*` umstellen statt weiterzupflegen. Dietmars bereits eingetragenes
+  Client-ID/Secret (Instanz #42890) müsste dabei einmal sichtbar in eine neue
+  NRGNetztransparenz-Instanz übertragen werden — über EMS-Koordination abzustimmen,
+  kein stiller Umzug.
 
 ## Anlagendaten — EMS_GetPlantInfo() als führende Quelle (geändert 13.09.2026)
 
