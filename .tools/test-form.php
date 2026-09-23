@@ -41,7 +41,7 @@ class IPSModule
     public function WriteAttributeString($n, $v) {}
 }
 const KL_WARNING = 103;
-function IPS_GetLibrary($g) { return ['Version' => '0.9.1-beta.1', 'Build' => 19]; }
+function IPS_GetLibrary($g) { return ['Version' => '0.10.0-beta.1', 'Build' => 20]; }
 function IPS_GetName($id) { return 'EMS'; }
 
 $props = [];
@@ -146,7 +146,7 @@ $verLine = findEl($el, 'DocVersionLabel')['caption'] ?? '';
 
 $check(!str_contains($plantLine, 'wird geprüft') && !str_contains($plantLine, 'sobald installiert'), "Anlagendaten: statischer Platzhalter steht noch: $plantLine");
 $check(!str_contains($tibLine, 'wird geprüft'), "Preisquelle: statischer Platzhalter steht noch: $tibLine");
-$check(str_contains($verLine, 'Version 0.9.1'), "Versionszeile nicht ersetzt: $verLine");
+$check(str_contains($verLine, 'Version 0.10.0'), "Versionszeile nicht ersetzt: $verLine");
 
 switch ($scenario) {
     case 'ems_ok':

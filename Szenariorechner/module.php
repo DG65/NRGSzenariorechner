@@ -71,6 +71,10 @@ class Szenariorechner extends IPSModule
         $this->RegisterPropertyInteger('HausLastVarID', 0);
         $this->RegisterPropertyFloat('SpeicherPreisEurKwh', 0.0);
         $this->RegisterPropertyInteger('SpeicherAbschreibungJahre', 0);
+        // Zielgröße: 0 = nicht angegeben, dann liefert das Szenario nur das Standardraster
+        // (0/10/20/…/80 kWh). Bei einer Zielgröße wird zusätzlich genau dieser Wert simuliert
+        // und als eigener Punkt hervorgehoben ('targetStorageKwh' in der Rückgabe).
+        $this->RegisterPropertyFloat('ZielgroesseSpeicherKwh', 0.0);
 
         // ── §14a-Beitritt (Szenario 3) — reine Nutzereingabe-Annahmen, da
         // SBH_GetState (SteuerboxHub) aktuell nur den Live-Zustand liefert,
@@ -712,11 +716,13 @@ class Szenariorechner extends IPSModule
             'periodFrom'        => 0,
             'periodTo'          => 0,
             'currentStorageKwh' => $current,
+            'targetStorageKwh'  => $this->ReadPropertyFloat('ZielgroesseSpeicherKwh'),
             'netValueCtKwh'     => round($fixedCt - $feedInCt, 2),
             'feedInKnown'       => $feedInCt > 0.0,
             'coverage'          => 0.0,
             'gapDays'           => 0,
             'sizes'             => [],
+            'target'            => null,
             'dataComplete'      => false,
             'reason'            => '',
         ];
@@ -757,6 +763,11 @@ class Szenariorechner extends IPSModule
         $steps = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0];
         if ($current > 0.0 && !in_array($current, $steps, true)) {
             $steps[] = $current;
+            sort($steps);
+        }
+        $target = $result['targetStorageKwh'];
+        if ($target > 0.0 && !in_array($target, $steps, true)) {
+            $steps[] = $target;
             sort($steps);
         }
 
@@ -830,6 +841,9 @@ class Szenariorechner extends IPSModule
                 if ($row['cap'] > $current && $perYear > $best) {
                     $best = $perYear;
                 }
+            }
+            if ($target > 0.0 && abs($row['cap'] - $target) < 0.01) {
+                $result['target'] = $entry;
             }
             $result['sizes'][] = $entry;
         }

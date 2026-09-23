@@ -143,6 +143,25 @@ check($row20 !== null && abs($row20['additionalSavingsEurPerYear'] - 160.60) < 0
 check($row20 !== null && $row20['paybackYears'] === round(10 * 500 / 160.6, 1), 'Speicher: Amortisation aus Zusatzinvestition', json_encode($row20['paybackYears'] ?? null));
 check(($m->written['StorageSizeAdditionalSavingsEur'] ?? null) === 160.6, 'Speicher: Kennzahl-Variable bei vollständiger Datenlage', json_encode($m->written));
 
+// E1b) Zielgröße außerhalb des Standardrasters wird zusätzlich simuliert und hervorgehoben
+$m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0,
+            'SpeicherKwh' => 10.0, 'ZielgroesseSpeicherKwh' => 45.0],
+    ['series' => [200 => $pv, 201 => $ld]]);
+$GLOBALS['emsIds'] = [];
+$r = $m->CalculateStorageSizeScenario(2);
+$row45 = null;
+foreach ($r['sizes'] as $x) { if ($x['storageKwh'] === 45.0) { $row45 = $x; } }
+check($row45 !== null, 'Zielgröße: 45 kWh (außerhalb 0/10/…/80) wird zusätzlich simuliert', json_encode(array_column($r['sizes'], 'storageKwh')));
+check($r['target'] !== null && $r['target']['storageKwh'] === 45.0, 'Zielgröße: Ergebnis hebt den Zielpunkt gesondert hervor', json_encode($r['target']));
+check($r['targetStorageKwh'] === 45.0, 'Zielgröße: wird aus der Property übernommen', (string) $r['targetStorageKwh']);
+
+// E1c) Ohne Zielgröße bleibt "target" leer, kein zusätzlicher Rasterpunkt
+$m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0, 'SpeicherKwh' => 10.0],
+    ['series' => [200 => $pv, 201 => $ld]]);
+$GLOBALS['emsIds'] = [];
+$r = $m->CalculateStorageSizeScenario(2);
+check($r['target'] === null && count($r['sizes']) === 8, 'Zielgröße: ohne Angabe bleibt es beim Standardraster (0/10/…/80, aktuelle 10 liegt schon darin)', json_encode(array_column($r['sizes'], 'storageKwh')));
+
 // E2) Fehlende Lastwerte werden NICHT als 0 gerechnet
 $ldGap = fn($t) => ((int) date('G', $t) < 6) ? null : (((int) date('G', $t) === 20) ? 12000.0 : 0.0);
 $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'SpeicherKwh' => 10.0],

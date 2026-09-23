@@ -187,6 +187,12 @@ Kein Wirkungsgradmodell, keine Leistungsgrenzen (optimistisch).
 **Eingaben:** Speicherpreis, Nutzungsdauer, Bezugspreis (Festpreis), Erzeugungs- und Lastvariable.
 **Automatisch:** aktuelle Speichergröße und Einspeisevergütung aus `EMS_GetPlantInfo`.
 
+**Zielgröße (ab 0.10.0):** `ZielgroesseSpeicherKwh` (0 = nicht angegeben) simuliert zusätzlich zum
+festen Raster (0/10/…/80 kWh) genau diese eine Größe und hebt sie in der Rückgabe unter `target`
+gesondert hervor (`null`, solange keine Zielgröße gesetzt ist). Dient als Vorstufe für ein Dashboard-
+Eingabefeld "was würde X kWh bringen" statt nur des groben Standardrasters — kein eigenes neues
+Rechenmodell, derselbe SoC-Simulationslauf bekommt nur einen zusätzlichen Stützpunkt.
+
 ### 3. §14a-Beitritt
 
 **Frage:** Lohnt sich der Wechsel in die reduzierten §14a-Netzentgelte (gegen

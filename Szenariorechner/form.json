@@ -245,6 +245,12 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "ZielgroesseSpeicherKwh",
+                    "caption": "Zielgröße (kWh, 0 = nur Standardraster 0/10/…/80 kWh rechnen)",
+                    "digits": 0
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "SpeicherPreisEurKwh",
                     "caption": "Speicherpreis (€ je kWh, 0 = keine Amortisationsrechnung)",
                     "digits": 0
