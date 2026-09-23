@@ -431,12 +431,23 @@ class Szenariorechner extends IPSModule
         $this->SetStatus($anyReady ? 102 : 104);
 
         $this->SetTimerInterval('RefreshScenarios', 24 * 60 * 60 * 1000);
-        // Sofort einmal rechnen statt bis zu 24h auf den ersten Wert zu warten.
+        // Sofort einmal rechnen statt bis zu 24h auf den ersten Wert zu warten. Eine PHP-
+        // Warnung aus AC_GetAggregatedValues() (z. B. bei einer beschädigten Aggregations-
+        // Stunde im Archiv) darf das Speichern der Instanz nicht blockieren — IPS wertet
+        // eine während ApplyChanges ausgegebene Warnung sonst selbst als RPC-Fehler, auch
+        // wenn unser eigenes try/catch die Exception längst abgefangen hat. Deshalb wird
+        // die Warnung hier geloggt statt mit @ stillschweigend verworfen (SUITE.md 8/13).
+        set_error_handler(function (int $errno, string $errstr) {
+            $this->LogMessage('Sofortberechnung: ' . $errstr, KL_WARNING);
+            return true;
+        }, E_WARNING);
         try {
             $this->RefreshScenarioVariables();
         } catch (\Throwable $e) {
             // Ein Rechenfehler darf das Anlegen/Speichern der Instanz nie verhindern.
             $this->SendDebug(__FUNCTION__, 'Sofortberechnung fehlgeschlagen: ' . $e->getMessage(), 0);
+        } finally {
+            restore_error_handler();
         }
     }
 
