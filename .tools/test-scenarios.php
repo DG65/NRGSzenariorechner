@@ -134,7 +134,7 @@ $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' 
             'SpeicherKwh' => 10.0, 'SpeicherPreisEurKwh' => 500.0, 'SpeicherAbschreibungJahre' => 15],
     ['series' => [200 => $pv, 201 => $ld]]);
 $GLOBALS['emsIds'] = [];   // ohne EMS: Werte kommen aus den eigenen Eingaben
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 $row20 = null;
 foreach ($r['sizes'] as $x) { if ($x['storageKwh'] === 20.0) { $row20 = $x; } }
 check(abs($r['netValueCtKwh'] - 22.0) < 0.001 && $r['feedInKnown'] === true, 'Speicher: Nutzen je kWh = Bezugspreis minus Vergütung = 22 ct', (string) $r['netValueCtKwh']);
@@ -148,7 +148,7 @@ $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' 
             'SpeicherKwh' => 10.0, 'ZielgroesseSpeicherKwh' => 45.0],
     ['series' => [200 => $pv, 201 => $ld]]);
 $GLOBALS['emsIds'] = [];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 $row45 = null;
 foreach ($r['sizes'] as $x) { if ($x['storageKwh'] === 45.0) { $row45 = $x; } }
 check($row45 !== null, 'Zielgröße: 45 kWh (außerhalb 0/10/…/80) wird zusätzlich simuliert', json_encode(array_column($r['sizes'], 'storageKwh')));
@@ -159,22 +159,30 @@ check($r['targetStorageKwh'] === 45.0, 'Zielgröße: wird aus der Property über
 $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0, 'SpeicherKwh' => 10.0],
     ['series' => [200 => $pv, 201 => $ld]]);
 $GLOBALS['emsIds'] = [];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 check($r['target'] === null && count($r['sizes']) === 8, 'Zielgröße: ohne Angabe bleibt es beim Standardraster (0/10/…/80, aktuelle 10 liegt schon darin)', json_encode(array_column($r['sizes'], 'storageKwh')));
+
+// E1d) Live-Parameter (z. B. Dashboard-Slider per RequestAction) übersteuert die Property, ohne sie zu verändern
+$m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0,
+            'SpeicherKwh' => 10.0, 'ZielgroesseSpeicherKwh' => 45.0],
+    ['series' => [200 => $pv, 201 => $ld]]);
+$GLOBALS['emsIds'] = [];
+$r = $m->CalculateStorageSizeScenario(2, 70);
+check($r['targetStorageKwh'] === 70.0 && $r['target']['storageKwh'] === 70.0, 'Live-Parameter: 70 kWh übersteuert die Property (45)', json_encode([$r['targetStorageKwh'], $r['target']['storageKwh'] ?? null]));
 
 // E2) Fehlende Lastwerte werden NICHT als 0 gerechnet
 $ldGap = fn($t) => ((int) date('G', $t) < 6) ? null : (((int) date('G', $t) === 20) ? 12000.0 : 0.0);
 $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'SpeicherKwh' => 10.0],
     ['series' => [200 => $pv, 201 => $ldGap]]);
 $GLOBALS['emsIds'] = [];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 check($r['coverage'] < 0.9 && $r['dataComplete'] === false && !isset($m->written['StorageSizeAdditionalSavingsEur']), 'Speicher: Lastlücken senken die Abdeckung und verhindern die Kennzahl', json_encode([$r['coverage'], $m->written]));
 
 // E3) Ohne Vergütung wird das offen gesagt
 $m = fresh(['PvErzeugungVarID' => 200, 'HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'SpeicherKwh' => 10.0],
     ['series' => [200 => $pv, 201 => $ld]]);
 $GLOBALS['emsIds'] = [];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 check($r['feedInKnown'] === false && str_contains($r['reason'], 'Einspeisevergütung nicht angegeben'), 'Speicher: fehlende Vergütung wird als optimistisch gemeldet', $r['reason']);
 
 
@@ -211,7 +219,7 @@ $m = fresh(['HausLastVarID' => 201, 'FestpreisCtKwh' => 30.0, 'Einspeiseverguetu
     ['series' => [700 => $pvW, 201 => $ld], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]]]);
 $GLOBALS['emsIds'] = [];
 $av = $m->GetAvailableScenarios()[1];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 check($av['available'] === true && count($r['sizes']) > 0, 'Erkennung: PV-Leistung aus InverterHub, Speicher-Szenario rechnet mit manueller Hauslast', json_encode($av));
 // I6b: Hauslast aus MeterHub `house` (Zählerstand, vorzeichenfrei)
 $houseKwh = fn($t) => ((int) date('G', $t) === 20) ? 12.0 : 0.0;   // Zähler: kWh je Stunde
@@ -219,7 +227,7 @@ $houseAssign = fn(int $vid, array $more = []) => ['contractVersion' => '1.3', 'a
 $m = fresh(['FestpreisCtKwh' => 30.0, 'EinspeiseverguetungCtKwh' => 8.0, 'SpeicherKwh' => 10.0],
     ['series' => [700 => $pvW, 800 => $houseKwh], 'ihubIds' => [20], 'ihub' => [20 => ['contractVersion' => '1.3', 'pvPowerID' => 700]], 'meterIds' => [12], 'mhub' => [12 => $houseAssign(800)]]);
 $GLOBALS['emsIds'] = [];
-$r = $m->CalculateStorageSizeScenario(2);
+$r = $m->CalculateStorageSizeScenario(2, 0);
 $row20 = null; foreach ($r['sizes'] as $x) { if ($x['storageKwh'] === 20.0) { $row20 = $x; } }
 check($m->GetAvailableScenarios()[1]['available'] === true && $row20 !== null && abs($row20['additionalSavingsEurPerYear'] - 160.60) < 0.05, 'Hauslast: Zählerstand aus MeterHub house wird ohne Eingabe übernommen und rechnet richtig', json_encode($row20));
 // I6c: Hauslast als Leistung: Vorzeichenprüfung

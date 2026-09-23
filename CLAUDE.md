@@ -27,7 +27,11 @@ und Phasenplan: [KONZEPT.md](KONZEPT.md).
 
 - **Chart-/Dashboard-Darstellung gehört nicht hierher** — das übernimmt das parallel gebaute
   `NRGDashboard`-Modul. Vor Festlegung des Rückgabeformats bei größeren Änderungen kurz
-  abstimmen, damit das Dashboard es direkt konsumieren kann.
+  abstimmen, damit das Dashboard es direkt konsumieren kann. Konkret: die Kachel
+  `NRGDashboardSzenarien` (Dashboard-Repo, abgestimmt 23.09.2026, siehe KONZEPT.md Abschnitt
+  "Dashboard-Anbindung") ruft `SZR_Calculate*()` direkt mit Live-Parametern per `RequestAction()`
+  auf — deshalb `CalculateStorageSizeScenario(int $days, int $targetKwh)` ohne PHP-Standardwert
+  (0 = kein Override).
 - **Netzentgelt-Zeitvariabilität (Modul 3)** kommt aus `TIBBERGR_GetTariffConfig`, nicht
   selbst nachbilden.
 - **§14a-Live-Signal** kommt aus `SBH_GetState` (SteuerboxHub), sobald die Hardware existiert

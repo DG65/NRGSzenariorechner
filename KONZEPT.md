@@ -193,6 +193,31 @@ gesondert hervor (`null`, solange keine Zielgröße gesetzt ist). Dient als Vors
 Eingabefeld "was würde X kWh bringen" statt nur des groben Standardrasters — kein eigenes neues
 Rechenmodell, derselbe SoC-Simulationslauf bekommt nur einen zusätzlichen Stützpunkt.
 
+`SZR_CalculateStorageSizeScenario(int $InstanceID, int $days, int $targetKwh)` nimmt die Zielgröße
+seit 0.10.0 zusätzlich als PFLICHT-Parameter (kein PHP-Standardwert, SUITE.md Stolperstein 8/20):
+`$targetKwh > 0` übersteuert die Property einmalig für diesen Aufruf, ohne sie zu verändern — Grund
+ist die neue `NRGDashboardSzenarien`-Kachel (Abstimmung mit der Dashboard-Session 23.09.2026): ein
+Slider in der Kachel ruft die Funktion per `RequestAction()` direkt mit Live-Parametern auf, ohne
+Property+ApplyChanges-Umweg. `0` übergeben, wenn kein Override gewünscht ist (dann gilt die Property
+wie bisher). Die beiden anderen Szenario-Funktionen (`CalculateDynamicTariffScenario`,
+`CalculateParagraph14aScenario`) bleiben unverändert, ihre Signatur passt für die Kachel schon.
+
+## Dashboard-Anbindung (NRGDashboardSzenarien)
+
+Abgestimmt mit der Dashboard-Session am 23.09.2026: eine neue, eigenständige Kachel
+`NRGDashboardSzenarien` (Geschwister von PVMonitor/WPMonitor, gehört zum NRGDashboard-Modul, nicht zu
+SZR) findet die SZR-Instanz automatisch (Modul-GUID `{7F3A9C1E-4B5D-4A6F-8C2E-1D9B3A7E5F4C}`, Muster
+"genau eine Instanz, sonst die einzige aktive, sonst 0 = nicht raten"), zeigt die Verbindung als
+eigene Statuszeile (✅/⚠️/ℹ️) und ruft `SZR_GetAvailableScenarios($id)` für die Discovery. Ein
+"Beauftragen"-Knopf/Slider löst `RequestAction()` in der Kachel aus, die direkt eine der drei
+`SZR_Calculate*()`-Funktionen mit Live-Parametern aufruft (kein Timer, kein Property+ApplyChanges-
+Umweg) und das Ergebnis per `UpdateVisualizationValue()` sofort zurück in die Karte schreibt.
+Rückgabeformat unverändert (`contractVersion`, `dataComplete`/`reason`, Kernkennzahl) — kein
+Wrapper nötig, Dashboard zeigt `reason` prominent bei `dataComplete:false`. Kein Push/
+`VISU_PostNotificationEx` (SUITE.md Stolperstein 22 betrifft OS-Benachrichtigungen, hier unpassend,
+es ist ein normaler Karten-Refresh). Optik (macOS-Card-Stil, `-apple-system`-Font-Stack, dezente
+Schatten) liegt vollständig bei der Dashboard-Kachel, eigenes CSS in ihrer `module.html`.
+
 ### 3. §14a-Beitritt
 
 **Frage:** Lohnt sich der Wechsel in die reduzierten §14a-Netzentgelte (gegen

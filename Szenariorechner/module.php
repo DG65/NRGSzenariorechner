@@ -474,7 +474,7 @@ class Szenariorechner extends IPSModule
                     $this->CalculateDynamicTariffScenario(30);
                     break;
                 case 'storageSize':
-                    $this->CalculateStorageSizeScenario(30);
+                    $this->CalculateStorageSizeScenario(30, 0);
                     break;
                 case 'paragraph14a':
                     $this->CalculateParagraph14aScenario();
@@ -704,19 +704,28 @@ class Szenariorechner extends IPSModule
      *                              'paybackWithinLifetime'|null ], … ],
      *   'dataComplete'      => bool,    // coverage >= 90 % und keine Archivlücke
      *   'reason'            => string,  // deutsch, leer wenn vollständig gerechnet
+     *
+     * $targetKwh: 0 = kein Live-Override, es gilt die Zielgröße aus der Property
+     * ZielgroesseSpeicherKwh (falls gesetzt). Ein Wert > 0 überschreibt sie einmalig
+     * für diesen Aufruf, ohne die Property zu verändern (z. B. Slider einer
+     * Dashboard-Kachel: SZR_CalculateStorageSizeScenario($id, $days, $targetKwh)
+     * direkt aus RequestAction(), ohne ApplyChanges/Property-Umweg). Kein
+     * PHP-Standardwert (SUITE.md Stolperstein 8/20) — 0 explizit übergeben, wenn
+     * kein Override gewünscht ist.
      */
-    public function CalculateStorageSizeScenario(int $days): array
+    public function CalculateStorageSizeScenario(int $days, int $targetKwh): array
     {
         $current = $this->getSpeicherKwh();
         $fixedCt = (float) $this->ReadPropertyFloat('FestpreisCtKwh');
         $feedInCt = $this->getVerguetungCt();
+        $target = $targetKwh > 0 ? (float) $targetKwh : $this->ReadPropertyFloat('ZielgroesseSpeicherKwh');
         $result = [
             'contractVersion'   => '1.1',
             'periodDays'        => $days,
             'periodFrom'        => 0,
             'periodTo'          => 0,
             'currentStorageKwh' => $current,
-            'targetStorageKwh'  => $this->ReadPropertyFloat('ZielgroesseSpeicherKwh'),
+            'targetStorageKwh'  => $target,
             'netValueCtKwh'     => round($fixedCt - $feedInCt, 2),
             'feedInKnown'       => $feedInCt > 0.0,
             'coverage'          => 0.0,
